@@ -1,5 +1,5 @@
 {
-  "name": "pi-roles",
+  "name": "@andywangzzm/pi-roles",
   "version": "0.2.3",
   "description": "Role-based session configuration for pi coding agent. Launch a session as a named role and hot-swap roles mid-session, with optional pi-intercom and pi-mcp-adapter integration.",
   "keywords": [
@@ -12,14 +12,6 @@
     "agent",
     "system-prompt"
   ],
-  "homepage": "https://github.com/lojacobs/pi-roles#readme",
-  "bugs": {
-    "url": "https://github.com/lojacobs/pi-roles/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "git+https://github.com/lojacobs/pi-roles.git"
-  },
   "license": "MIT",
   "type": "module",
   "main": "./dist/index.js",

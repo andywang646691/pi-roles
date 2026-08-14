@@ -22,7 +22,7 @@ When you swap roles, the session's **system prompt, model, thinking level, and a
 ## Install
 
 ```bash
-pi install npm:pi-roles
+pi install npm:@andywangzzm/pi-roles
 ```
 
 Then restart pi. The extension is auto-discovered; the `--role` flag and `/role` command become available.
@@ -30,7 +30,7 @@ Then restart pi. The extension is auto-discovered; the `--role` flag and `/role`
 To try without installing:
 
 ```bash
-pi -e git:github.com/lojacobs/pi-roles
+pi -e git:github.com/andywang646691/pi-roles
 ```
 
 ---
