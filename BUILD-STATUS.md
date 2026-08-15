@@ -22,8 +22,8 @@ These override anything in the Phase-2/3 sections below. The numbered notes here
 7. **`SettingsManager` is not exposed on `ExtensionContext`.** pi-roles reads its own `pi-roles` namespace from `~/.pi/agent/settings.json` and `<project>/.pi/settings.json` directly via `src/settings.ts`. Project values win field-level merge. Parse failures degrade to defaults silently.
 8. **Persisted `ActiveRoleState` recovery** uses `ctx.sessionManager.getEntries()` and walks the array right-to-left for the last `CustomEntry` whose `customType === ACTIVE_ROLE_ENTRY_TYPE`. There is no convenience `getEntriesByCustomType` API — the manual scan is the supported path.
 9. **`--reset` ordering**: set `pendingRoleAfterReset` *before* calling `ctx.newSession()` because `newSession` synchronously fires `session_start` with reason `"new"` before resolving. The session_start handler reads and clears the pointer. On cancellation, restore to `null`.
-10. **`before_agent_start` REPLACES Pi's default system prompt.** The role body is returned as `{ systemPrompt }` (with the optional intercom addendum appended after the body). We do **not** read `event.systemPrompt`. Pi's docstring on `BeforeAgentStartEventResult.systemPrompt` says exactly "Replace the system prompt for this turn"; that is the founding goal of pi-roles — the role body must be authoritative so a non-coding role isn't polluted by Pi's default coding-assistant framing. Subsequent extensions in the chain see our value as their `event.systemPrompt` and may compose if they choose. The replacement composition is implemented in `composeSystemPrompt(state, pi)` (exported from `src/index.ts` for unit-testability); the registered handler is a one-line delegation. **Earlier drafts of this note documented an "appender" implementation — that was wrong and has been corrected.**
-11. **Fallback-on-resolution-error**: a missing or broken requested role does not fail the session — `applyResolved` notifies the user and falls back to the built-in `role-assistant`. Only complete absence of the built-in causes a no-op.
+10. **`before_agent_start` REPLACES Pi's default system prompt.** The role body is returned as `{ systemPrompt }` (with the optional intercom addendum appended after the body). We do **not** read `event.systemPrompt` — with **one exception**: the built-in `pi` role's body is `PI_DEFAULT_PROMPT_MARKER`, injected by `resolveRole`, and `composeSystemPrompt(state, pi, event.systemPrompt)` substitutes Pi's live base prompt for the marker (also for `extends: pi` chains, where it is prepended). So `/role pi` reproduces Pi's out-of-the-box prompt byte-for-byte without maintaining a copy. Pi's docstring on `BeforeAgentStartEventResult.systemPrompt` says exactly "Replace the system prompt for this turn"; that is the founding goal of pi-roles — the role body must be authoritative so a non-coding role isn't polluted by Pi's default coding-assistant framing. Subsequent extensions in the chain see our value as their `event.systemPrompt` and may compose if they choose. The replacement composition is implemented in `composeSystemPrompt(state, pi, baseSystemPrompt?)` (exported from `src/index.ts` for unit-testability); the registered handler is a one-line delegation. **Earlier drafts of this note documented an "appender" implementation — that was wrong and has been corrected.**
+11. **Fallback-on-resolution-error**: a missing or broken requested role does not fail the session — `applyResolved` notifies the user and falls back to the built-in `pi`. Only complete absence of the built-in causes a no-op.
 
 This document captures everything a follow-up session needs to continue without re-fetching the pi-mono / pi-subagents / pi-intercom / pi-mcp-adapter sources. The verified API surface is locked into `src/schemas.ts` and into the facts table below.
 
@@ -117,7 +117,7 @@ export default function (pi: ExtensionAPI) { ... }
 
 1. ✅ **TypeBox 1.x** (root `typebox` package), not Zod, not `@sinclair/typebox` 0.34.
 2. ✅ **`mcp:server-name` inside `tools`**, not a separate `mcp:` field. Mirrors pi-subagents.
-3. ✅ **Built-in `role-assistant` at lowest priority**; configurable `defaultRole` setting overrides.
+3. ✅ **Built-in `pi` (default) + `role-assistant` (optional) at lowest priority**; configurable `defaultRole` setting overrides. The default role is `pi`, not `role-assistant`.
 4. ✅ **`/role <name>` preserves history; `--reset` clears it** via `ctx.newSession()`.
 5. ✅ **Tools tri-state**: set / explicit-empty / inherit (encoded as `ToolsDirective` in schemas.ts).
 6. ✅ **Markdown body merge for `extends`**: parent prepended to child.
@@ -275,7 +275,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("session_start", async (event, ctx) => {
     // 1. Restore from appendEntry if reason is "reload" or "resume".
-    // 2. Otherwise resolve: --role > PI_ROLE > settings.defaultRole > role-assistant.
+    // 2. Otherwise resolve: --role > PI_ROLE > settings.defaultRole > built-in pi.
     // 3. If pendingRoleAfterReset (set by /role <n> --reset), use it.
     // 4. Apply.
   });

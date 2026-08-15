@@ -8,7 +8,9 @@ role-driven agent. Each role is a Markdown file with YAML frontmatter — same c
 optional intercom mode for that session. Roles are hot-swappable mid-session without
 restarting Pi.
 
-The extension ships **one** built-in role (`role-assistant`) and is otherwise agnostic of
+The extension ships **two** built-in roles — `pi` (the default; reproduces Pi's
+out-of-the-box behavior by substituting Pi's live default system prompt) and
+`role-assistant` (an optional helper) — and is otherwise agnostic of
 which roles exist. Roles are user content, not extension code.
 
 ## Architecture Overview
@@ -77,7 +79,7 @@ touches the filesystem or Pi APIs.
 | `RawRole` | TS interface | Parsed role from disk before `extends` resolution |
 | `ResolvedRole` | TS interface | Fully resolved role with `extends` chain merged |
 | `ToolsDirective` | TS union | Tri-state: `{ kind: "inherit" }` or `{ kind: "set", names: string[] }` |
-| Constants | `const` | `ACTIVE_ROLE_ENTRY_TYPE`, `ROLE_NOTIFICATION_MESSAGE_TYPE`, `STATUS_KEY`, `BUILTIN_ROLE_ASSISTANT_NAME` |
+| Constants | `const` | `ACTIVE_ROLE_ENTRY_TYPE`, `ROLE_NOTIFICATION_MESSAGE_TYPE`, `STATUS_KEY`, `BUILTIN_PI_ROLE_NAME`, `BUILTIN_ROLE_ASSISTANT_NAME`, `PI_DEFAULT_PROMPT_MARKER` |
 
 ### `src/roles.ts` — Discovery + parsing + `extends` resolution
 
@@ -93,7 +95,7 @@ and `typebox/value`. Trivially testable.
 
 **Error strategy:** Throws `RoleResolutionError` for every user-facing problem. The message is
 shown directly in the TUI — no stack traces leak. Callers in `index.ts` catch and fall back
-to the built-in `role-assistant` on resolution failure.
+to the built-in `pi` on resolution failure.
 
 **Discovery precedence:** project > user > built-in. First match for a given `name` wins;
 later matches are recorded as `shadowed` and surfaced in `/role list`.
@@ -127,7 +129,7 @@ The Pi extension entry point (`export default function(pi: ExtensionAPI)`). Owns
 | Concern | Implementation |
 |---|---|
 | **Module-scoped `RuntimeState`** | `activeRole`, `pendingRoleAfterReset`, `roles[]`, `shadowed[]`, `settings`, `intent`, `titleInFlight` |
-| **`session_start` handler** | Restore from `appendEntry` (reload/resume) or resolve from precedence chain (pendingReset > `--role` > `PI_ROLE` > `defaultRole` > built-in). Calls `applyResolved`. |
+| **`session_start` handler** | Restore from `appendEntry` (reload/resume) or resolve from precedence chain (pendingReset > `--role` > `PI_ROLE` > `defaultRole` > built-in `pi`). Calls `applyResolved`. |
 | **`before_agent_start` handler** | Returns `{ systemPrompt: role.body + intercom addendum }`. **Full replacement** — ignores Pi's default coding-assistant framing. Triggers fire-and-forget title generation on first user prompt. |
 | **`/role` command** | Dispatches `list`, `current`, `reload`, or `<name> [--reset]`. Tab-completes role names against discovery. |
 | **`--role` flag** | Registered as a Pi flag; read in `pickInitialRoleName`. |
@@ -176,15 +178,19 @@ Exposes `loadBuiltInRoleAssistant()` for tests and for direct loading when full 
 isn't needed. The real loader (`loadRoleFile`) lives in `roles.ts`; this module only adds
 path resolution and an existence check.
 
-### `resources/roles/role-assistant.md` — The built-in fallback
+### `resources/roles/` — The bundled built-in roles
 
-A Markdown role file (YAML frontmatter + system prompt body) that:
-1. Greets the user and lists available roles
-2. Shows exact `/role <name>` commands
-3. Walks the user through building a new role interactively
-4. Writes the new role file to the chosen scope directory
+- `pi.md` — the **default** role. Its markdown body is informational only; `resolveRole`
+  injects `PI_DEFAULT_PROMPT_MARKER` in its place (only for the built-in-scope file — a
+  user/project `pi.md` is ordinary content), and `composeSystemPrompt` substitutes Pi's
+  live default system prompt for the marker every turn. `/role pi` therefore always means
+  "exactly what pi would do without the extension".
+- `role-assistant.md` — optional helper. Greets the user, lists available roles, shows the
+  exact `/role <name>` commands, and walks the user through building a new role
+  interactively (drafts it, writes it to the chosen scope directory).
 
-Lowest discovery priority — drop a same-named file in user or project scope to override.
+Both live at the lowest discovery priority — drop a same-named file in user or project
+scope to override either.
 
 ## Data Flow
 
@@ -201,7 +207,7 @@ session_start (reason="startup")
   │     └─ discoverRoles(cwd, scope)  → RawRole[]
   │
   ├─► pickInitialRoleName(pi, settings, roles)
-  │     precedence: --role > PI_ROLE > defaultRole > role-assistant
+  │     precedence: --role > PI_ROLE > defaultRole > built-in pi
   │
   └─► applyResolved(pi, ctx, state, "architect", options)
         │
@@ -338,15 +344,15 @@ Settings are re-read on every `session_start`, every `/role` invocation, and eve
 
 | Error class | When | Behavior |
 |---|---|---|
-| `RoleResolutionError` | Invalid YAML, schema violation, name/filename mismatch, cycle in `extends`, missing parent | Surface in TUI via `ctx.ui.notify("warning")`, fall back to built-in `role-assistant` |
+| `RoleResolutionError` | Invalid YAML, schema violation, name/filename mismatch, cycle in `extends`, missing parent | Surface in TUI via `ctx.ui.notify("warning")`, fall back to built-in `pi` |
 | Model not found / no API key | `applyRole` model resolution | Warn, continue with existing model |
 | `mcp:*` tool not registered | `filterToolsForRuntime` | Drop entry silently (or warn if `warnOnMissingMcp: true`) |
 | `settings.json` parse failure | `loadSettings` | Return `{}`, proceed with defaults |
 | Title generation failure | `generateAndApplyTitle` catch block | Swallow — best effort, next prompt retries |
-| Complete absence of built-in `role-assistant` resource | `findBuiltInAssistant` | No-op — session starts without a role (Pi default system prompt) |
+| Complete absence of built-in `pi` resource | `findBuiltInRole` | No-op — session starts without a role (Pi default system prompt) |
 
 **Principle:** A broken role file should never prevent pi-roles from loading.
-The built-in `role-assistant` is the universal fallback; if even that is missing,
+The built-in `pi` is the universal fallback; if even that is missing,
 pi-roles degrades gracefully to a no-op.
 
 ### System prompt replacement
@@ -355,6 +361,15 @@ The `before_agent_start` handler returns `{ systemPrompt: <role body> }` and int
 ignores `event.systemPrompt` (Pi's default coding-assistant framing + any prior extensions
 in the chain). The founding goal is that the role body is **authoritative** — a non-coding
 role (marketing, research, ops) must not inherit the default "expert coding assistant" voice.
+
+**One exception — the built-in `pi` role.** `resolveRole` injects `PI_DEFAULT_PROMPT_MARKER`
+in place of the built-in `pi` body (and `extends: pi` chains prepend it). At compose time,
+`composeSystemPrompt(state, pi, event.systemPrompt)` substitutes the marker with Pi's
+*live* base prompt — the fully-built default with tool snippets, guidelines, pi-docs paths,
+project context, skills, and cwd — so the `pi` role reproduces the out-of-the-box experience
+byte-for-byte and can never drift across pi versions. When no base prompt is available the
+marker is dropped (or, for `/role pi` alone, `undefined` is returned so Pi keeps its own
+prompt). A user/project `pi.md` that shadows the built-in is ordinary content again.
 
 Subsequent extensions in the chain see pi-roles' value as their `event.systemPrompt` and
 may compose if they choose. This is Pi's documented chaining model.
@@ -381,7 +396,7 @@ schema, because JSON Schema can't distinguish `undefined` from "not validated"):
 ## Non-Goals (explicitly out of scope)
 
 - **Spawning sub-agents.** That's `pi-subagents`. Compose the two.
-- **Defining built-in roles beyond `role-assistant`.** Roles are user content.
+- **Defining built-in roles beyond `pi` and `role-assistant`.** Roles are user content.
 - **Managing parallel sessions.** Use multiple terminals or `tmux` + `pi-intercom`.
 - **Persisting active role across Pi restarts** (except via `--role` / `PI_ROLE` / `defaultRole`).
 - **Restricting which tools a role can request.** If a role lists `bash`, it gets `bash`.
@@ -399,6 +414,7 @@ schema, because JSON Schema can't distinguish `undefined` from "not validated"):
 | **`--reset` + `newSession` ordering** — `pendingRoleAfterReset` must be set before `newSession` because `session_start` fires synchronously | Enforced in the command handler; cancellation path restores `null`. |
 | **Extension memory wiped on `/reload`** — all module-scoped state is lost | `pi.appendEntry` persistence + `session_start` restore from session log. Intent and active role survive `/reload`. |
 | **No runtime cache invalidation** for role files — if a parent role is edited while a child is active, the child's in-memory resolved state is stale | `/role reload` or `/role <same-name>` re-reads the full chain from disk. Users iterating on roles are expected to use these. |
+| **Default-prompt drift** — Pi's default system prompt changes between versions; a static copy in the `pi` role would rot | No copy exists: `resolveRole` injects a marker and `composeSystemPrompt` substitutes `event.systemPrompt` (Pi's own fully-built prompt) every turn. Drift is impossible by construction. |
 | **Pi API surface instability** — the extension depends on Pi internal APIs that may change between versions | Version pin in `package.json` `engines`; the BUILD-STATUS.md documents the verified API surface against pi-mono as of April 2026. |
 
 ## Layout on Disk
@@ -418,7 +434,8 @@ pi-roles/
     *.test.ts           Vitest test suites (125 tests)
   resources/
     roles/
-      role-assistant.md  The one built-in role
+      pi.md              The built-in default role (live default-prompt passthrough)
+      role-assistant.md  The built-in optional helper
   examples/
     architect.md         Minimal reference role
     orchestrator.md      Fully-loaded reference role

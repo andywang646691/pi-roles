@@ -7,7 +7,7 @@
  *
  * The two entry points downstream code uses:
  *   - `discoverRoles(cwd, scope)` — find role files on disk plus the bundled
- *     built-in role-assistant.
+ *     built-in roles (`pi` and `role-assistant`).
  *   - `resolveRole(name, all)`     — turn a `RawRole` into a `ResolvedRole` by
  *     walking the `extends` chain and merging according to the documented
  *     precedence (child wins, parent body prepended).
@@ -20,7 +20,9 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { Value } from "typebox/value";
 import {
+  BUILTIN_PI_ROLE_NAME,
   BUILTIN_ROLE_ASSISTANT_NAME,
+  PI_DEFAULT_PROMPT_MARKER,
   RoleFrontmatterSchema,
   type RawRole,
   type ResolvedRole,
@@ -134,7 +136,7 @@ function listRoleFiles(dir: string): string[] {
  *
  * `scope` filters which user-writable directories we look at (`user`,
  * `project`, or `both`). The built-in roles are always included regardless of
- * scope — otherwise the fallback `role-assistant` would vanish under
+ * scope — otherwise the fallback `pi` would vanish under
  * `roleScope: "project"`.
  */
 export function discoverRoles(cwd: string, scope: RoleScope): DiscoveryResult {
@@ -284,6 +286,13 @@ export function normalizeTools(value: string | null | undefined): ToolsDirective
  *     line + `---` + blank line. This applies recursively, so a 3-level
  *     chain produces grandparent → parent → child in order.
  *
+ * Special case: the built-in `pi` role (and only that role, only at
+ * built-in scope — a user/project `pi.md` shadows it and is treated as
+ * ordinary content) contributes `PI_DEFAULT_PROMPT_MARKER` instead of its
+ * markdown body. index.ts substitutes Pi's live default system prompt for
+ * the marker at compose time, so `/role pi` and `extends: pi` always mean
+ * "Pi's default behavior", never a stale copy.
+ *
  * Cycles throw a `RoleResolutionError` listing the full chain so the user
  * can see exactly which file points back at which.
  *
@@ -347,7 +356,14 @@ export function resolveRole(name: string, all: RawRole[]): ResolvedRole {
     if (fm.intercom !== undefined) intercom = fm.intercom;
     const directive = normalizeTools(fm.tools);
     if (directive.kind === "set") tools = directive;
-    if (role.body.length > 0) bodies.push(role.body);
+    if (role.source === "built-in" && role.frontmatter.name === BUILTIN_PI_ROLE_NAME) {
+      // Built-in pi: body is a marker, substituted with Pi's live default
+      // system prompt at compose time. Its markdown body (informational
+      // text for humans) is never used.
+      bodies.push(PI_DEFAULT_PROMPT_MARKER);
+    } else if (role.body.length > 0) {
+      bodies.push(role.body);
+    }
   }
 
   // Schema guarantees leaf.frontmatter.description is non-empty; merge can
@@ -374,13 +390,18 @@ export function resolveRole(name: string, all: RawRole[]): ResolvedRole {
 // ---------------------------------------------------------------------------
 
 /**
- * Helper for callers that just want "the role-assistant if nothing else is
- * available". Returns the built-in by name from a discovery result, or
- * `undefined` if it isn't present (which would only happen if the bundled
- * resources directory was deleted).
+ * Helper for callers that just want "the built-in role of a given name".
+ * Returns the built-in-scope role with that name from a discovery result,
+ * or `undefined` if it isn't present (which would only happen if the
+ * bundled resources directory was deleted).
+ */
+export function findBuiltInRole(roles: RawRole[], name: string): RawRole | undefined {
+  return roles.find((r) => r.frontmatter.name === name && r.source === "built-in");
+}
+
+/**
+ * Backwards-compatible alias: the built-in role-assistant specifically.
  */
 export function findBuiltInAssistant(roles: RawRole[]): RawRole | undefined {
-  return roles.find(
-    (r) => r.frontmatter.name === BUILTIN_ROLE_ASSISTANT_NAME && r.source === "built-in",
-  );
+  return findBuiltInRole(roles, BUILTIN_ROLE_ASSISTANT_NAME);
 }

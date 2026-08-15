@@ -15,11 +15,12 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   RoleResolutionError,
   discoverRoles,
+  findBuiltInRole,
   normalizeTools,
   parseRoleSource,
   resolveRole,
 } from "../src/roles.ts";
-import type { RawRole } from "../src/schemas.ts";
+import { BUILTIN_PI_ROLE_NAME, PI_DEFAULT_PROMPT_MARKER, type RawRole } from "../src/schemas.ts";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -68,6 +69,15 @@ function fm(opts: {
 
 function rawFromText(text: string, name: string): RawRole {
   return parseRoleSource(text, `/virtual/${name}.md`, "project");
+}
+
+/** A built-in-scope role, e.g. the bundled `pi` or `role-assistant`. */
+function builtInRole(name: string, body = `Body for ${name}`): RawRole {
+  return parseRoleSource(
+    `---\nname: ${name}\ndescription: built-in ${name}\n---\n${body}`,
+    `/virtual/builtin/${name}.md`,
+    "built-in",
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +227,46 @@ describe("resolveRole", () => {
 
   it("missing leaf role throws", () => {
     expect(() => resolveRole("nope", [])).toThrow(/not found/);
+  });
+
+  it("built-in pi resolves to the default-prompt marker, not its md body", () => {
+    const pi = builtInRole(BUILTIN_PI_ROLE_NAME, "Informational text for humans.");
+    const resolved = resolveRole(BUILTIN_PI_ROLE_NAME, [pi]);
+    expect(resolved.body).toBe(PI_DEFAULT_PROMPT_MARKER);
+    expect(resolved.body).not.toContain("Informational text");
+    expect(resolved.source).toBe("built-in");
+  });
+
+  it("child extending built-in pi prepends the marker to its body", () => {
+    const pi = builtInRole(BUILTIN_PI_ROLE_NAME, "Informational text for humans.");
+    const child = rawFromText(
+      fm({ name: "architect-strict", extends: BUILTIN_PI_ROLE_NAME, body: "Strict body." }),
+      "architect-strict",
+    );
+    const resolved = resolveRole("architect-strict", [pi, child]);
+    expect(resolved.body).toBe(`${PI_DEFAULT_PROMPT_MARKER}\n\n---\n\nStrict body.`);
+    expect(resolved.extendsChain).toEqual(["architect-strict", BUILTIN_PI_ROLE_NAME]);
+  });
+
+  it("a user/project pi.md shadows the built-in and is treated as ordinary content", () => {
+    // Discovery dedupes by name (project > user > built-in), so resolveRole
+    // only ever sees the winning user-scope file.
+    const userPi = parseRoleSource(
+      `---\nname: ${BUILTIN_PI_ROLE_NAME}\ndescription: my own default\n---\nMy custom default body.`,
+      `/home/u/.pi/agent/roles/${BUILTIN_PI_ROLE_NAME}.md`,
+      "user",
+    );
+    const resolved = resolveRole(BUILTIN_PI_ROLE_NAME, [userPi]);
+    expect(resolved.body).toBe("My custom default body.");
+    expect(resolved.body).not.toContain(PI_DEFAULT_PROMPT_MARKER);
+    expect(resolved.source).toBe("user");
+  });
+
+  it("findBuiltInRole finds by name at built-in scope only", () => {
+    const pi = builtInRole(BUILTIN_PI_ROLE_NAME);
+    const projectPi = rawFromText(fm({ name: BUILTIN_PI_ROLE_NAME }), BUILTIN_PI_ROLE_NAME);
+    expect(findBuiltInRole([projectPi, pi], BUILTIN_PI_ROLE_NAME)?.source).toBe("built-in");
+    expect(findBuiltInRole([projectPi], BUILTIN_PI_ROLE_NAME)).toBeUndefined();
   });
 
   it("child tools=set:[] explicitly disables inherited tools", () => {

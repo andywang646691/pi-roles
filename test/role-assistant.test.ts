@@ -1,12 +1,22 @@
 /**
- * Phase 6 tests: the bundled `role-assistant.md` exists, parses, and
- * surfaces in `discoverRoles` results so the fallback path works.
+ * Phase 6 tests: the bundled built-in roles — `role-assistant.md` and
+ * `pi.md` — exist, parse, and surface in `discoverRoles` results so the
+ * default and fallback paths work.
  */
 
 import { describe, expect, it } from "vitest";
-import { discoverRoles, findBuiltInAssistant, resolveRole } from "../src/roles.ts";
+import {
+  discoverRoles,
+  findBuiltInAssistant,
+  findBuiltInRole,
+  resolveRole,
+} from "../src/roles.ts";
 import { builtInRoleAssistantPath, loadBuiltInRoleAssistant } from "../src/role-assistant.ts";
-import { BUILTIN_ROLE_ASSISTANT_NAME } from "../src/schemas.ts";
+import {
+  BUILTIN_PI_ROLE_NAME,
+  BUILTIN_ROLE_ASSISTANT_NAME,
+  PI_DEFAULT_PROMPT_MARKER,
+} from "../src/schemas.ts";
 import { existsSync } from "node:fs";
 
 describe("built-in role-assistant", () => {
@@ -45,5 +55,27 @@ describe("built-in role-assistant", () => {
     expect(resolved.name).toBe(BUILTIN_ROLE_ASSISTANT_NAME);
     expect(resolved.body.length).toBeGreaterThan(0);
     expect(resolved.tools).toEqual({ kind: "inherit" });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// built-in pi (the default role)
+// ---------------------------------------------------------------------------
+
+describe("built-in pi role", () => {
+  it("appears in discoverRoles output as built-in", () => {
+    const result = discoverRoles("/tmp", "user");
+    const found = findBuiltInRole(result.roles, BUILTIN_PI_ROLE_NAME);
+    expect(found).toBeDefined();
+    expect(found!.source).toBe("built-in");
+  });
+
+  it("resolves to the default-prompt marker so compose can substitute the live prompt", () => {
+    const result = discoverRoles("/tmp", "user");
+    const resolved = resolveRole(BUILTIN_PI_ROLE_NAME, result.roles);
+    expect(resolved.name).toBe(BUILTIN_PI_ROLE_NAME);
+    expect(resolved.body).toBe(PI_DEFAULT_PROMPT_MARKER);
+    expect(resolved.tools).toEqual({ kind: "inherit" });
+    expect(resolved.source).toBe("built-in");
   });
 });

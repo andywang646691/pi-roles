@@ -77,7 +77,7 @@ export type RoleScope = Static<typeof RoleScopeSchema>;
 /**
  * Where a discovered role came from. Used in /role list output and for
  * shadowing detection. 'built-in' refers to roles bundled with the pi-roles
- * package (currently only `role-assistant`).
+ * package (currently `pi` and `role-assistant`).
  */
 export const RoleSourceSchema = Type.Union(
   [Type.Literal("project"), Type.Literal("user"), Type.Literal("built-in")],
@@ -248,8 +248,8 @@ export const PiRolesSettingsSchema = Type.Object(
 
     /**
      * Default role name applied when no --role / PI_ROLE is supplied.
-     * Default: "role-assistant" (the built-in fallback).
-     * If set to a missing role, we warn and use the built-in role-assistant.
+     * Default: "pi" (the built-in default coding-agent role).
+     * If set to a missing role, we warn and use the built-in pi role.
      */
     defaultRole: Type.Optional(Type.String({ minLength: 1 })),
 
@@ -331,10 +331,31 @@ export const ROLE_NOTIFICATION_MESSAGE_TYPE = "pi-roles:notification" as const;
 export const STATUS_KEY = "pi-roles" as const;
 
 /**
- * Name of the built-in default role. Acts as the lowest-priority fallback
- * when no defaultRole is configured and no --role / PI_ROLE is supplied.
+ * Name of the built-in default role: Pi's default expert coding agent.
+ * Acts as the lowest-priority fallback when no defaultRole is configured
+ * and no --role / PI_ROLE is supplied.
+ */
+export const BUILTIN_PI_ROLE_NAME = "pi" as const;
+
+/**
+ * Name of the built-in role-assistant. Optional helper role — helps the
+ * user pick or build roles. No longer the default; switch to it explicitly
+ * with `/role role-assistant` or `defaultRole`.
  */
 export const BUILTIN_ROLE_ASSISTANT_NAME = "role-assistant" as const;
+
+/**
+ * Marker injected by `resolveRole` in place of the built-in `pi` role's
+ * markdown body. At compose time (index.ts) it is replaced with Pi's
+ * *live* default system prompt (the base prompt Pi passes to
+ * `before_agent_start` as `event.systemPrompt`).
+ *
+ * Why not a static copy? Pi's default prompt is built dynamically — tool
+ * snippets, guidelines, pi-docs paths, project context, skills, and cwd
+ * are all injected by the installed pi version. Substituting the live
+ * value means the `pi` role can never drift from the installed pi.
+ */
+export const PI_DEFAULT_PROMPT_MARKER = "__PI_ROLES_PI_DEFAULT_PROMPT__" as const;
 
 /**
  * Placeholder shown in the session name when intent hasn't been generated yet.

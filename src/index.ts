@@ -7,7 +7,7 @@
  *
  *   - `session_start` — restore from persisted state on reload/resume,
  *     otherwise resolve a role name from the precedence chain (pendingReset
- *     > --role > PI_ROLE > settings.defaultRole > built-in role-assistant)
+ *     > --role > PI_ROLE > settings.defaultRole > built-in pi)
  *     and apply it.
  *   - `before_agent_start` — re-inject the active role's body as the system
  *     prompt every turn (Pi rebuilds the prompt per turn; this is the
@@ -25,10 +25,11 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-cod
 import type { AutocompleteItem } from "@mariozechner/pi-tui";
 import { applyRole, effectiveIntercomMode, resetSession, type RoleNotificationDetails } from "./apply.ts";
 import { intercomPromptAddendum, isIntercomAvailable } from "./intercom.ts";
-import { discoverRoles, findBuiltInAssistant, resolveRole, RoleResolutionError } from "./roles.ts";
+import { discoverRoles, findBuiltInRole, resolveRole, RoleResolutionError } from "./roles.ts";
 import {
   ACTIVE_ROLE_ENTRY_TYPE,
-  BUILTIN_ROLE_ASSISTANT_NAME,
+  BUILTIN_PI_ROLE_NAME,
+  PI_DEFAULT_PROMPT_MARKER,
   ROLE_NOTIFICATION_MESSAGE_TYPE,
   type ActiveRoleState,
   type PiRolesSettings,
@@ -190,7 +191,7 @@ export default function (pi: ExtensionAPI): void {
         configuredTitleModel: state.settings.titleModel,
       });
     }
-    return composeSystemPrompt(state, pi);
+    return composeSystemPrompt(state, pi, event?.systemPrompt);
   });
 
   // ---------------------------------------------------------------- /role
@@ -250,15 +251,24 @@ export default function (pi: ExtensionAPI): void {
  * when intercom is requested AND the intercom tool is registered, a small
  * mode-specific addendum appended to the body.
  *
+ * The `baseSystemPrompt` is Pi's fully-built default system prompt for this
+ * turn (`event.systemPrompt`). It's used only to substitute
+ * `PI_DEFAULT_PROMPT_MARKER` segments in the role body — i.e. the built-in
+ * `pi` role and any chain that `extends: pi`. Everything else is returned
+ * verbatim; custom role bodies are authoritative and never composed with
+ * upstream prompt content.
+ *
  * Exported for unit tests; the handler in `before_agent_start` is a one-line
  * delegation.
  */
 export function composeSystemPrompt(
   state: Pick<RuntimeState, "activeRole" | "settings">,
   pi: Pick<ExtensionAPI, "getAllTools" | "getSessionName">,
+  baseSystemPrompt?: string,
 ): { systemPrompt: string } | undefined {
   if (!state.activeRole) return undefined;
-  const body = state.activeRole.body;
+  const body = substitutePiDefaultPrompt(state.activeRole.body, baseSystemPrompt);
+  if (!body) return undefined;
   const mode = effectiveIntercomMode(state.activeRole, state.settings.intercomMode);
   const addendum =
     mode !== "off" && isIntercomAvailable(pi as ExtensionAPI)
@@ -270,14 +280,45 @@ export function composeSystemPrompt(
 }
 
 /**
+ * Replace `PI_DEFAULT_PROMPT_MARKER` segments in a role body with Pi's live
+ * default system prompt.
+ *
+ * - No marker → body returned unchanged (the common case).
+ * - Marker + base prompt → marker replaced by the base prompt.
+ * - Marker but no base prompt (e.g. a test, or another extension replaced
+ *   the prompt earlier in the chain) → marker dropped, remaining segments
+ *   joined with the standard separator. If nothing is left, returns
+ *   `undefined`, which tells Pi to keep its own base prompt — the `pi` role
+ *   degrades to "no override" rather than emitting a stale copy.
+ */
+export function substitutePiDefaultPrompt(
+  body: string,
+  baseSystemPrompt: string | undefined,
+): string | undefined {
+  const segments = body.split(PI_DEFAULT_PROMPT_MARKER);
+  if (segments.length === 1) return body;
+  // Segments may carry the "\n\n---\n\n" separator resolveRole inserted
+  // around the marker; strip it so the remaining content joins cleanly.
+  const rest = segments
+    .map((s) => s.trim())
+    .map((s) => s.replace(/^---\s*/, "").replace(/\s*---$/, "").trim())
+    .filter((s) => s.length > 0)
+    .join("\n\n---\n\n");
+  const usable = baseSystemPrompt && baseSystemPrompt.trim().length > 0 ? baseSystemPrompt : undefined;
+  if (usable) return rest.length > 0 ? `${usable}\n\n---\n\n${rest}` : usable;
+  return rest.length > 0 ? rest : undefined;
+}
+
+/**
  * Pick the role to launch with on a fresh session_start (no pendingReset, no
  * persisted state to restore). Precedence per BUILD-STATUS.md:
  *
- *   --role flag > PI_ROLE env > settings.defaultRole > built-in role-assistant
+ *   --role flag > PI_ROLE env > settings.defaultRole > built-in pi
  *
  * If a configured `defaultRole` doesn't exist, we fall through to the
- * built-in rather than failing — a missing role shouldn't lock the user out
- * of the session.
+ * built-in `pi` rather than failing — a missing role shouldn't lock the
+ * user out of the session, and `pi` reproduces Pi's out-of-the-box
+ * behavior.
  */
 export function pickInitialRoleName(
   pi: ExtensionAPI,
@@ -295,7 +336,7 @@ export function pickInitialRoleName(
     return configured;
   }
 
-  return BUILTIN_ROLE_ASSISTANT_NAME;
+  return BUILTIN_PI_ROLE_NAME;
 }
 
 /**
@@ -343,17 +384,17 @@ async function applyResolved(
   } catch (err) {
     const message = err instanceof RoleResolutionError ? err.message : String(err);
     debugLog("index", `applyResolved fallback: ${message}`);
-    // Fall back to built-in assistant if the requested role is missing or
+    // Fall back to the built-in pi role if the requested role is missing or
     // broken. Surface the underlying error so the user can fix the file.
     if (ctx.hasUI) {
-      ctx.ui.notify(`pi-roles: ${message} Falling back to ${BUILTIN_ROLE_ASSISTANT_NAME}.`, "warning");
+      ctx.ui.notify(`pi-roles: ${message} Falling back to ${BUILTIN_PI_ROLE_NAME}.`, "warning");
     }
-    const fallback = findBuiltInAssistant(state.roles);
+    const fallback = findBuiltInRole(state.roles, BUILTIN_PI_ROLE_NAME);
     if (!fallback) {
-      // Built-in is missing too — bail without changing session state.
+      // Built-in pi is missing too — bail without changing session state.
       return;
     }
-    resolved = resolveRole(BUILTIN_ROLE_ASSISTANT_NAME, state.roles);
+    resolved = resolveRole(BUILTIN_PI_ROLE_NAME, state.roles);
   }
 
   const result = await applyRole(

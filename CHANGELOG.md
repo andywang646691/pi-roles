@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **Default role is now `pi`** (Pi's default expert coding agent) instead of
+  `role-assistant`. Installing pi-roles no longer changes the out-of-the-box
+  session; `role-assistant` is now an optional helper you opt into via
+  `/role role-assistant` or `defaultRole`.
+- **Fallback on broken/missing role**: resolution failures now fall back to
+  the built-in `pi` instead of `role-assistant`.
+- **Built-in `pi` role with live default-prompt passthrough**: `resolveRole`
+  injects `PI_DEFAULT_PROMPT_MARKER` in place of the built-in `pi` body, and
+  `composeSystemPrompt` substitutes Pi's live default system prompt
+  (`event.systemPrompt`) each turn — `/role pi` and `extends: pi` reproduce
+  the installed pi's default prompt byte-for-byte with no copy to maintain.
+
+### Added
+
+- **Built-in `pi` role** (`resources/roles/pi.md`): the default role;
+  overridable by dropping your own `pi.md` in project or user scope;
+  inheritable via `extends: pi`.
+- **`substitutePiDefaultPrompt`**: exported marker-substitution helper with
+  unit tests (marker + base, marker alone, marker in `extends` chains,
+  missing base).
+
 ## [0.2.0] - 2026-05-05
 
 ### Changed

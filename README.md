@@ -4,6 +4,8 @@
 
 `pi-roles` is to **top-level pi sessions** what [`pi-subagents`](https://github.com/nicobailon/pi-subagents) is to **sub-agents**: same `.md` + YAML frontmatter convention, same project/user scope rules, drop-in flow. The extension is **agnostic of which roles exist** — roles are just markdown files you create.
 
+Out of the box the session starts as the **`pi` role** — Pi's own default expert coding agent, reproduced exactly — so installing the extension changes nothing until you opt into a role. `role-assistant` (an interactive helper that picks/builds roles) is available on demand, not the default.
+
 ```bash
 pi --role architect              # launch as architect
 PI_ROLE=planner pi               # or via env
@@ -137,7 +139,7 @@ Roles are looked up in this order, **first match wins** for any given name:
 |---|---|---|
 | project | `<repo>/.pi/roles/<name>.md` (or any ancestor) | `[project]` |
 | user | `~/.pi/agent/roles/<name>.md` | `[user]` |
-| built-in | bundled with the package | `[built-in]` |
+| built-in | bundled with the package (`pi` and `role-assistant`) | `[built-in]` |
 
 When a project-scope role shadows a user-scope role of the same name, the user-scope entry is listed under a separate "Shadowed" heading in `/role list` output so you know it exists but won't load.
 
@@ -148,7 +150,7 @@ The default `roleScope` is `both` (project + user + built-in). Override via sett
 {
   "pi-roles": {
     "roleScope": "both",        // "user" | "project" | "both"
-    "defaultRole": "architect", // optional; falls back to role-assistant
+    "defaultRole": "architect", // optional; falls back to built-in pi
     "intercomMode": "off",      // "off" | "receive" | "send" | "both"
     "titleModel": "openai/gpt-4o-mini"
   }
@@ -157,25 +159,35 @@ The default `roleScope` is `both` (project + user + built-in). Override via sett
 
 ---
 
-## Built-in `role-assistant`
+## Built-in roles
 
-`pi-roles` ships **one** built-in role: `role-assistant`. It's the default fallback when no `defaultRole` is configured and you don't pass `--role` or `PI_ROLE`.
+`pi-roles` ships **two** built-in roles:
 
-The role-assistant:
+### `pi` — the default
 
-1. Lists the roles available on your machine (project + user + built-in) on its first turn.
+`pi` is Pi's default expert coding agent. When no `--role`, `PI_ROLE`, or `defaultRole` is given, the session starts as `pi` — and because its body is substituted at runtime with Pi's **live** default system prompt (tool list, guidelines, pi-docs paths, project context, and cwd all come from the installed pi), the out-of-the-box experience is byte-identical to running pi without the extension.
+
+- `/role pi` restores the default behavior after you've switched to another role.
+- Other roles inherit the default behavior with `extends: pi` (the default prompt is prepended to the child's body).
+- Drop your own `pi.md` into project or user scope to override it — your body then fully replaces pi's default prompt, and the built-in is listed as shadowed.
+
+### `role-assistant` — optional helper
+
+`role-assistant` is an interactive helper you switch to on demand:
+
+1. Lists the roles available on your machine (project + user + built-in).
 2. Shows the exact command to switch to one (e.g. `/role architect`).
-3. Offers to help you build a **new** role: it asks the questions, drafts the markdown, shows it for your approval, writes it to project or user scope (your choice), and then prints the command for you to launch it (`/role <new-name> --reset`).
+3. Offers to help you build a **new** role: it asks the questions, drafts the markdown, shows it for approval, writes it to project or user scope (your choice), and prints the launch command (`/role <new-name> --reset`).
 
-You can override the built-in by dropping a `role-assistant.md` into your project or user roles directory — the same priority rules apply.
-
-You can also set any other role as your default:
+It is **not** the default. If you want it at session start, set it explicitly:
 
 ```json
-{ "pi-roles": { "defaultRole": "architect" } }
+{ "pi-roles": { "defaultRole": "role-assistant" } }
 ```
 
-If `defaultRole` points to a missing role, the built-in `role-assistant` is used and a warning is shown.
+You can override either built-in by dropping a same-named `.md` into your project or user roles directory — the same priority rules apply.
+
+If `defaultRole` points to a missing role, the built-in `pi` is used and a warning is shown.
 
 ---
 
@@ -200,7 +212,7 @@ pi --role architect "Help me design the auth schema"
 PI_ROLE=architect pi
 ```
 
-Resolution order: `--role` > `PI_ROLE` > `defaultRole` setting > built-in `role-assistant`.
+Resolution order: `--role` > `PI_ROLE` > `defaultRole` setting > built-in `pi`.
 
 ---
 
@@ -271,7 +283,7 @@ If you have Pi's [auto-reload](https://github.com/badlogic/pi-mono/blob/main/pac
 {
   "pi-roles": {
     "roleScope": "both",
-    "defaultRole": "role-assistant",
+    "defaultRole": "pi",
     "intercomMode": "off",
     "titleModel": "openai/gpt-4o-mini",
     "warnOnMissingMcp": true
@@ -282,7 +294,7 @@ If you have Pi's [auto-reload](https://github.com/badlogic/pi-mono/blob/main/pac
 | Key | Default | Description |
 |---|---|---|
 | `roleScope` | `"both"` | Discovery scope. `"user"`, `"project"`, or `"both"`. |
-| `defaultRole` | `"role-assistant"` | Role applied at session start when no `--role` or `PI_ROLE`. |
+| `defaultRole` | `"pi"` | Role applied at session start when no `--role` or `PI_ROLE`. The built-in `pi` reproduces Pi's default behavior. |
 | `intercomMode` | `"off"` | Default intercom behavior for roles that don't set it explicitly. |
 | `titleModel` | `null` (auto) | Model used for session-intent summarization. Falls back to a small built-in or session's current model. |
 | `warnOnMissingMcp` | `true` | Whether to surface a warning when a role's `mcp:*` entry can't be resolved. |
@@ -294,7 +306,7 @@ Project settings beat global settings, per Pi's standard precedence.
 ## What this extension does **not** do
 
 - **Spawn sub-agents.** That's [`pi-subagents`](https://github.com/nicobailon/pi-subagents). The two compose: use `pi-roles` for top-level session roles, `pi-subagents` for delegated workers within a role.
-- **Define any built-in roles other than `role-assistant`.** Roles are user content; the extension stays small.
+- **Define any built-in roles other than `pi` and `role-assistant`.** Roles are user content; the extension stays small.
 - **Manage parallel sessions.** Use multiple terminals or `tmux`. Coordination between parallel sessions is what `pi-intercom` handles, optionally.
 - **Persist which role was active across pi restarts** — except via `--role` / `PI_ROLE` / `defaultRole`. By design.
 - **Restrict which tools a role can request.** If a role lists `bash`, it gets `bash`. Permission boundaries are your call — pair with [`permission-gate.ts`](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/examples/extensions/permission-gate.ts) or a similar guard if you need them.
@@ -305,13 +317,14 @@ Project settings beat global settings, per Pi's standard precedence.
 
 These are decided, not configurable, so the extension behaves predictably:
 
-- **Markdown body fully replaces Pi's default system prompt.** No silent merging — most non-coding roles are polluted by the default "expert coding assistant" framing, so by design the role body is authoritative. The handler returns `{ systemPrompt: <role body> }` from `before_agent_start` and ignores the upstream chain value. If you want to keep Pi's default content (or compose with another extension), include the relevant text in your role body explicitly.
+- **Markdown body fully replaces Pi's default system prompt.** No silent merging — most non-coding roles are polluted by the default "expert coding assistant" framing, so by design the role body is authoritative. The handler returns `{ systemPrompt: <role body> }` from `before_agent_start` and ignores the upstream chain value. If you want to keep Pi's default content (or compose with another extension), include the relevant text in your role body explicitly — or `extends: pi`.
+- **The built-in `pi` role is the one exception to full replacement**: its body is a marker that gets substituted with Pi's *live* default system prompt each turn (`event.systemPrompt`), so `/role pi` and `extends: pi` can never drift from the installed pi version. A user/project `pi.md` that shadows it is ordinary content again.
 - **Role inheritance**: `model`/`thinking` override; `tools` is tri-state (set/empty/absent); markdown body is **prepended**.
 - **Cycle detection in `extends`** is a hard error at load time, not a warning. A circular role is broken; refusing to load it is the only sane behavior.
 - **`/role <name>` always re-reads from disk.** No staleness between switches, ever.
 - **`--reset` is explicit.** The role-assistant prints the exact `--reset` command for you to run manually rather than auto-resetting; resetting is destructive enough to deserve a deliberate keystroke.
 - **Title generation** (planned, not yet implemented). The current release sets the session name to the bare role name; intent-summarization on first user message lands in a follow-up. `--reset` already clears the cached intent so the future implementation drops in cleanly.
-- **Built-in `role-assistant` lives at the lowest discovery priority.** Drop a same-named file in user or project scope to override it.
+- **Built-in roles live at the lowest discovery priority.** Drop a same-named file in user or project scope to override either `pi` or `role-assistant`.
 - **`/role list` shows shadowed entries** with a `(shadowed)` marker — you can see what *would* load if the higher-priority file didn't exist.
 
 ---
@@ -332,7 +345,7 @@ After install, your roles live wherever you like — typical setup:
   architect.md          # overrides the user one for this project
 ```
 
-The extension itself ships only `role-assistant.md` (built-in scope) and the runtime code.
+The extension itself ships two built-in roles (`pi.md`, `role-assistant.md`) and the runtime code.
 
 ---
 
