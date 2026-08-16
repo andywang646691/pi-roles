@@ -227,7 +227,7 @@ The session name is set via Pi's native `pi.setSessionName()` API, so:
 
 The role indicator also appears in Pi's footer (via `ctx.ui.setStatus`), composing cleanly with [`pi-powerline-footer`](https://github.com/nicobailon/pi-powerline-footer) if you have it installed. No extra dependency required.
 
-**Title generation model** (planned). The `titleModel` setting is reserved for the future intent-summarization step; it has no effect today. The current release sets the session name to the bare role name and updates the prefix on swap.
+**Title generation model.** The `titleModel` setting picks the model used for intent summarization (default: the session's current model). Summaries are generated via the runtime's auth-aware completion, so models configured in `models.json` (e.g. `pi-switch/...`) work out of the box.
 
 ---
 
@@ -323,7 +323,7 @@ These are decided, not configurable, so the extension behaves predictably:
 - **Cycle detection in `extends`** is a hard error at load time, not a warning. A circular role is broken; refusing to load it is the only sane behavior.
 - **`/role <name>` always re-reads from disk.** No staleness between switches, ever.
 - **`--reset` is explicit.** The role-assistant prints the exact `--reset` command for you to run manually rather than auto-resetting; resetting is destructive enough to deserve a deliberate keystroke.
-- **Title generation** (planned, not yet implemented). The current release sets the session name to the bare role name; intent-summarization on first user message lands in a follow-up. `--reset` already clears the cached intent so the future implementation drops in cleanly.
+- **Title generation** is live: the first user message is summarized asynchronously (5–10 words) into the session name's intent half, via the runtime's auth-aware completion. `--reset` clears the cached intent so the next session re-generates cleanly.
 - **Built-in roles live at the lowest discovery priority.** Drop a same-named file in user or project scope to override either `pi` or `role-assistant`.
 - **`/role list` shows shadowed entries** with a `(shadowed)` marker — you can see what *would* load if the higher-priority file didn't exist.
 

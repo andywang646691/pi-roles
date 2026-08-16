@@ -30,6 +30,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   unit tests (marker + base, marker alone, marker in `extends` chains,
   missing base).
 
+### Fixed
+
+- **Title generation auth (title.ts)**: `generateAndApplyTitle` now
+  defaults to `ctx.modelRegistry.complete()` — the runtime's auth-aware
+  completion — instead of the bare `complete()` from `@mariozechner/pi-ai`.
+  The bare call bypassed auth resolution and failed for models.json
+  providers (local proxies like pi-switch) with "OpenAI API key is
+  required" errors, leaving the session name stuck at
+  "Intent not defined - <role>".
+- **Dependencies migrated to `@earendil-works/*`**: peer/dev dependencies
+  and all imports now use the current pi package names
+  (`@earendil-works/pi-ai`, `@earendil-works/pi-coding-agent`, …).
+  The bundle has zero runtime imports of the old `@mariozechner/*`
+  packages.
+
 ## [0.2.0] - 2026-05-05
 
 ### Changed

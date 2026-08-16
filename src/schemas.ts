@@ -22,7 +22,7 @@ import { Type, type Static } from "typebox";
 // ---------------------------------------------------------------------------
 
 /**
- * Pi's thinking levels, mirrored from `ThinkingLevel` in @mariozechner/pi-ai.
+ * Pi's thinking levels, mirrored from `ThinkingLevel` in @earendil-works/pi-ai.
  *
  * We don't import the type directly because we want to validate user-supplied
  * frontmatter and produce friendly error messages instead of letting Pi

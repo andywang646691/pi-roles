@@ -39,8 +39,8 @@
  * generation-token cancellation scheme.
  */
 
-import { complete, type AssistantMessage, type Context, type Model } from "@mariozechner/pi-ai";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { composeFooterStatus, composeSessionName, findModelInRegistry } from "./apply.ts";
 import { debugLog } from "./debug.ts";
 import {
@@ -198,8 +198,13 @@ export interface TitleArgs {
   /** From `settings.titleModel`. */
   configuredTitleModel: string | undefined;
   /**
-   * Test seam. Defaults to `complete` from `@mariozechner/pi-ai`. Tests pass
-   * a fake to avoid hitting a real model; production callers leave it unset.
+   * Test seam. Defaults to `ctx.modelRegistry.complete` — the runtime's
+   * auth-aware completion, which resolves the model's API key/headers
+   * (models.json config, credential store, env) the same way the main
+   * agent loop does. Do NOT call a bare `complete()` from pi-ai directly:
+   * it bypasses auth resolution and fails for models.json-configured
+   * providers (e.g. local proxies like pi-switch) with "API key is
+   * required" errors.
    */
   completeFn?: (model: Model<any>, context: Context) => Promise<AssistantMessage>;
 }
@@ -226,7 +231,10 @@ export interface TitleArgs {
  */
 export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
   const { prompt, state, pi, ctx, configuredTitleModel } = args;
-  const completeFn = args.completeFn ?? complete;
+  // Runtime: use the registry's auth-aware completion so models configured
+  // in models.json (pi-switch etc.) resolve their key the same way the
+  // main agent loop does. Tests inject a fake.
+  const completeFn = args.completeFn ?? ((model, context) => ctx.modelRegistry.complete(model, context));
 
   debugLog("title", "generateAndApplyTitle entered", {
     hasIntent: !!state.intent,

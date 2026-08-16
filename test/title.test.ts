@@ -25,8 +25,8 @@ import {
   type TitleStateRef,
 } from "../src/title.ts";
 import { ACTIVE_ROLE_ENTRY_TYPE, type ResolvedRole } from "../src/schemas.ts";
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import type { AssistantMessage, Context, Model } from "@mariozechner/pi-ai";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { AssistantMessage, Context, Model } from "@earendil-works/pi-ai";
 
 // ---------------------------------------------------------------------------
 // extractTitle

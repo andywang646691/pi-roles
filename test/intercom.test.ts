@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { intercomPromptAddendum, isIntercomAvailable, INTERCOM_TOOL_NAME } from "../src/intercom.ts";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 function piWithTools(names: string[]): ExtensionAPI {
   return {

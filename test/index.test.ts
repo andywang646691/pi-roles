@@ -15,7 +15,7 @@ import {
   substitutePiDefaultPrompt,
 } from "../src/index.ts";
 import { parseRoleSource, resolveRole } from "../src/roles.ts";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { PiRolesSettings, RawRole, ResolvedRole } from "../src/schemas.ts";
 import { BUILTIN_PI_ROLE_NAME, PI_DEFAULT_PROMPT_MARKER } from "../src/schemas.ts";
 import { INTERCOM_TOOL_NAME } from "../src/intercom.ts";

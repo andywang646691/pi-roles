@@ -24,7 +24,7 @@ import type {
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
-} from "@mariozechner/pi-coding-agent";
+} from "@earendil-works/pi-coding-agent";
 import {
   ACTIVE_ROLE_ENTRY_TYPE,
   INTENT_PLACEHOLDER,
