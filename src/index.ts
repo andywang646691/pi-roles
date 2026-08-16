@@ -128,9 +128,18 @@ export default function (pi: ExtensionAPI): void {
     debugLog("index", `session_start reason=${event.reason}`, restored ? { name: restored.name, intent: restored.intent } : undefined);
 
     // Restore precedence:
-    //   - On reload/resume, prefer the persisted active-role entry.
-    //   - On startup/new/fork, resolve fresh from the chain (the persisted
-    //     entry from a previous session is irrelevant here).
+    //   - pendingRoleAfterReset (from `/role X --reset`) wins: --reset is a
+    //     fresh start, so intent is deliberately not carried over.
+    //   - Otherwise, a persisted active-role entry wins whenever the session
+    //     has one. This covers reload and in-process session switching
+    //     (reason "resume"), but also continued launches (pi -c / pi -r /
+    //     pi --session <path>): pi's initial-runtime path never passes a
+    //     sessionStartEvent, so even a launch that opened an existing
+    //     session fires session_start with reason "startup". A fork also
+    //     copies the branch's entries (including the active-role entry), so
+    //     forked sessions keep the role+intent active at the fork point.
+    //   - Only a genuinely new session (fresh file — no entries) falls
+    //     through to fresh resolution from the chain below.
     let targetName: string | undefined;
     let preservedIntent: string | undefined;
     let silent = false;
@@ -139,7 +148,7 @@ export default function (pi: ExtensionAPI): void {
       targetName = pendingRoleAfterReset;
       pendingRoleAfterReset = null;
       // intent is intentionally cleared on --reset (session is a fresh start).
-    } else if ((event.reason === "reload" || event.reason === "resume") && restored) {
+    } else if (restored) {
       targetName = restored.name;
       preservedIntent = restored.intent;
       silent = true;
@@ -363,7 +372,30 @@ function findRestoredState(
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     if (e && e.type === "custom" && e.customType === ACTIVE_ROLE_ENTRY_TYPE) {
-      return (e.data ?? undefined) as ActiveRoleState | undefined;
+      const data = (e.data ?? undefined) as ActiveRoleState | undefined;
+      if (data && !data.intent) {
+        // The latest apply lost the intent. This happens on sessions resumed
+        // by a pre-fix launch (continue used to re-apply with no intent and
+        // persist that wipe), but a fresh session that never generated an
+        // intent looks identical here. The intent belongs to the session — it
+        // is only ever deliberately cleared by `--reset`, which starts a new
+        // file — so recovering the most recent intent this session ever had
+        // is safe and heals files damaged by the old behavior.
+        for (let j = i - 1; j >= 0; j--) {
+          const prev = entries[j];
+          if (prev && prev.type === "custom" && prev.customType === ACTIVE_ROLE_ENTRY_TYPE) {
+            const prevData = (prev.data ?? undefined) as ActiveRoleState | undefined;
+            if (prevData?.intent) {
+              debugLog("index", "findRestoredState intent fallback", {
+                role: data.name,
+                recoveredIntent: prevData.intent,
+              });
+              return { ...data, intent: prevData.intent };
+            }
+          }
+        }
+      }
+      return data;
     }
   }
   return undefined;

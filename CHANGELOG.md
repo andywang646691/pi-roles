@@ -9,7 +9,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Title generation no longer crashes when the runtime goes stale mid-flight
+- **Exit-and-relaunch no longer wipes the session role + intent.** Pi's
+  initial-runtime path never passes a `sessionStartEvent`, so every launch
+  that opens an existing session — `pi -c`, `pi -r`, `pi --session <path>` —
+  fires `session_start` with reason `"startup"`, indistinguishable from a
+  genuinely new session at the event level. The restore branch only handled
+  `"reload"`/`"resume"`, so a continued launch re-applied the default role
+  with `"Intent not defined"` and persisted a fresh active-role entry with
+  the intent wiped. `session_start` now restores the persisted active-role
+  entry whenever the session has one (startup-continue, reload, resume, and
+  forks, which copy the branch's entries); only a fresh file with no entry
+  falls through to fresh resolution. Regression tests in `test/reset.test.ts`.
+  Already-damaged sessions (a pre-fix launch persisted an entry with the
+  intent wiped) heal on the next resume: when the newest active-role entry
+  has no intent, the restore falls back to the most recent intent the session
+  ever recorded.
+
+- **Title generation no longer crashes when the runtime goes stale mid-flight**
   (`-p`/print mode).** `generateAndApplyTitle` ran fire-and-forget, but in
   print mode the completion call often outlives the session teardown
   (the process exits right after the turn), so the post-await apply —
