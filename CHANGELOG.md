@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeps alive across `ctx.newSession()` within a process. Regression tests
   added in `test/reset.test.ts` that simulate pi's per-session factory
   re-invocation.
+- **Role-switch notifications are now TUI toasts only.** "Switched to role
+  X" was sent via `pi.sendMessage(...)`, which persists a `custom_message`
+  to the session log and replays it to the LLM as a user message on every
+  turn — polluting the model context and invalidating prompt-cache
+  prefixes after every switch. It now goes through `ctx.ui.notify(...)`
+  (display-only, never persisted, never sent to the LLM).
 
 ### Changed
 

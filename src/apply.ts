@@ -28,7 +28,6 @@ import type {
 import {
   ACTIVE_ROLE_ENTRY_TYPE,
   INTENT_PLACEHOLDER,
-  ROLE_NOTIFICATION_MESSAGE_TYPE,
   STATUS_KEY,
   type ActiveRoleState,
   type IntercomMode,
@@ -55,7 +54,7 @@ export interface ApplyContext {
 }
 
 export interface ApplyOptions {
-  /** Suppress the "Switched to role X" sendMessage notification. */
+  /** Suppress the "Switched to role X" toast notification. */
   silent?: boolean;
   /**
    * If we're applying mid-session (vs. on `session_start`), pass the prior
@@ -73,17 +72,6 @@ export interface ApplyResult {
    * round-trip through the session log.
    */
   state: ActiveRoleState;
-}
-
-/**
- * Notification payload sent via `pi.sendMessage(ROLE_NOTIFICATION_MESSAGE_TYPE, ...)`.
- * index.ts registers a renderer for this message type so the user sees a
- * compact "Switched to role X" line in the TUI.
- */
-export interface RoleNotificationDetails {
-  name: string;
-  source: ResolvedRole["source"];
-  warnings: string[];
 }
 
 // ---------------------------------------------------------------------------
@@ -242,8 +230,12 @@ export function composeFooterStatus(roleName: string, intent: string | undefined
  *      first user message will trigger Phase 5's title generator.
  *   6. Persist — `appendEntry` so `/reload` and `session_start` with
  *      reason="reload"|"resume" can restore the active role.
- *   7. Notify — `sendMessage` with the role-notification customType
- *      unless `silent` is set (e.g. on initial session_start).
+ *   7. Notify — `ctx.ui.notify` toast with the role name unless `silent`
+ *      is set (e.g. on initial session_start). Intentionally NOT
+ *      `pi.sendMessage(...)`: custom messages are persisted to the session
+ *      log and replayed to the LLM as user messages, which would pollute
+ *      the model's context and defeat prompt-cache reuse on every switch.
+ *      A toast is display-only and never reaches the LLM.
  *
  * Warnings are accumulated and returned. Callers decide whether to surface
  * them as `ctx.ui.notify` toasts or fold them into the notification message.
@@ -325,18 +317,17 @@ export async function applyRole(
   };
   pi.appendEntry(ACTIVE_ROLE_ENTRY_TYPE, state);
 
-  // 7. Notify
-  if (!options.silent) {
+  // 7. Notify — transient TUI toast. Never `pi.sendMessage(...)`: custom
+  // messages get persisted to the session log and surface to the LLM as
+  // user messages (see session-manager's sessionEntryToContextMessages /
+  // convertToLlm), so a role switch would add noise to the model context
+  // and break prompt-cache reuse on every switch.
+  if (!options.silent && ctx.hasUI) {
     const display =
       warnings.length === 0
         ? `Switched to role ${role.name}`
         : `Switched to role ${role.name} (${warnings.length} warning${warnings.length === 1 ? "" : "s"})`;
-    pi.sendMessage<RoleNotificationDetails>({
-      customType: ROLE_NOTIFICATION_MESSAGE_TYPE,
-      content: display,
-      display: true,
-      details: { name: role.name, source: role.source, warnings },
-    });
+    ctx.ui.notify(display, "info");
   }
 
   return { warnings, state };

@@ -22,7 +22,6 @@ import {
 } from "../src/apply.ts";
 import {
   ACTIVE_ROLE_ENTRY_TYPE,
-  ROLE_NOTIFICATION_MESSAGE_TYPE,
   STATUS_KEY,
   type ResolvedRole,
 } from "../src/schemas.ts";
@@ -58,11 +57,10 @@ interface FakeApi {
     getAllTools: ReturnType<typeof vi.fn>;
     setSessionName: ReturnType<typeof vi.fn>;
     appendEntry: ReturnType<typeof vi.fn>;
-    sendMessage: ReturnType<typeof vi.fn>;
   };
   ctx: {
     hasUI: boolean;
-    ui: { setStatus: ReturnType<typeof vi.fn> };
+    ui: { setStatus: ReturnType<typeof vi.fn>; notify: ReturnType<typeof vi.fn> };
     modelRegistry: { find: ReturnType<typeof vi.fn>; getAll: ReturnType<typeof vi.fn> };
   };
 }
@@ -86,11 +84,10 @@ function makeFake(
       getAllTools: vi.fn(() => tools.map((t) => ({ ...t, sourceInfo: {} }))),
       setSessionName: vi.fn(),
       appendEntry: vi.fn(),
-      sendMessage: vi.fn(),
     },
     ctx: {
       hasUI: opts.hasUI ?? true,
-      ui: { setStatus: vi.fn() },
+      ui: { setStatus: vi.fn(), notify: vi.fn() },
       modelRegistry: {
         find: vi.fn((provider: string, id: string) =>
           models.find((m) => m.provider === provider && m.id === id),
@@ -322,9 +319,10 @@ describe("applyRole", () => {
       ACTIVE_ROLE_ENTRY_TYPE,
       expect.objectContaining({ name: "test", source: "project" }),
     );
-    expect(fake.pi.sendMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ customType: ROLE_NOTIFICATION_MESSAGE_TYPE }),
-    );
+    // Toast only — never a persisted/sendMessage notification: the fake pi
+    // surface has no sendMessage at all, so any call would fail loudly.
+    expect((fake.pi as Record<string, unknown>).sendMessage).toBeUndefined();
+    expect(fake.ctx.ui.notify).toHaveBeenCalledWith("Switched to role test", "info");
   });
 
   it("missing model → warning, keeps current", async () => {
@@ -382,10 +380,10 @@ describe("applyRole", () => {
     expect(result.warnings.some((w) => w.includes("intercom"))).toBe(true);
   });
 
-  it("silent option suppresses sendMessage", async () => {
+  it("silent option suppresses the toast notification", async () => {
     const fake = makeFake();
     await applyRole(makeRole(), applyCtxOf(fake), { silent: true });
-    expect(fake.pi.sendMessage).not.toHaveBeenCalled();
+    expect(fake.ctx.ui.notify).not.toHaveBeenCalled();
   });
 
   it("preservedIntent flows into session name and persisted state", async () => {
@@ -406,13 +404,13 @@ describe("applyRole", () => {
     expect(fake.ctx.ui.setStatus).not.toHaveBeenCalled();
   });
 
-  it("notification message includes warning count when warnings exist", async () => {
+  it("notification toast includes warning count when warnings exist", async () => {
     const fake = makeFake({ tools: [{ name: "read" }] });
     const role = makeRole({
       tools: { kind: "set", names: ["read", "mcp:missing"] },
     });
     await applyRole(role, applyCtxOf(fake, { warnOnMissingMcp: true }));
-    const call = fake.pi.sendMessage.mock.calls[0]?.[0] as { content: string };
-    expect(call.content).toMatch(/1 warning/);
+    const call = fake.ctx.ui.notify.mock.calls[0]?.[0] as string;
+    expect(call).toMatch(/1 warning/);
   });
 });

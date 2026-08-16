@@ -32,10 +32,12 @@ interface FakeSession {
 }
 
 interface Shared {
-  /** Every pi.sendMessage payload across all fake sessions. */
-  messages: Array<{ content: string; details?: { name: string } }>;
+  /** Every `ctx.ui.notify` toast across all fake sessions (display-only). */
+  toasts: string[];
   /** Every pi.setSessionName call across all fake sessions. */
   sessionNames: string[];
+  /** Stub so tests can assert notifications never reach the LLM path. */
+  sendMessage: ReturnType<typeof vi.fn>;
 }
 
 function makeFakePi(shared: Shared) {
@@ -57,20 +59,24 @@ function makeFakePi(shared: Shared) {
     setModel: async () => true,
     setThinkingLevel: () => {},
     appendEntry: () => {},
-    sendMessage: (msg: { content: string; details?: { name: string } }) => {
-      shared.messages.push(msg);
-    },
+    // Must never be called: role-switch notifications are display-only
+    // toasts, NOT persisted custom messages (those would leak into the LLM
+    // context via sessionEntryToContextMessages/convertToLlm).
+    sendMessage: shared.sendMessage,
     // test hooks (not part of the ExtensionAPI surface)
     handlers,
     commands,
   };
 }
 
-function makeFakeCtx(cwd: string) {
+function makeFakeCtx(cwd: string, shared: Shared) {
   return {
     cwd,
     hasUI: true,
-    ui: { notify: () => {}, setStatus: () => {} },
+    ui: {
+      notify: (message: string) => shared.toasts.push(message),
+      setStatus: () => {},
+    },
     sessionManager: { getEntries: () => [] },
     modelRegistry: { find: () => undefined, getAll: () => [] },
     newSession: undefined as unknown,
@@ -81,7 +87,7 @@ function makeFakeCtx(cwd: string) {
 function makeSession(factory: (pi: any) => void, cwd: string, shared: Shared): FakeSession {
   const pi = makeFakePi(shared);
   factory(pi); // <-- pi calls the factory once per session/runtime
-  const ctx = makeFakeCtx(cwd);
+  const ctx = makeFakeCtx(cwd, shared);
   return {
     pi,
     ctx,
@@ -113,7 +119,7 @@ describe("/role <name> --reset cross-session handoff", () => {
       join(rolesDir, "bare.md"),
       "---\nname: bare\ndescription: bare test role\n---\nbare body\n",
     );
-    shared = { messages: [], sessionNames: [] };
+    shared = { toasts: [], sessionNames: [], sendMessage: vi.fn() };
   });
 
   afterEach(() => {
@@ -143,14 +149,16 @@ describe("/role <name> --reset cross-session handoff", () => {
     const roleCmd = s1.commands.get("role")!;
     await roleCmd.handler("bare --reset", s1.ctx);
 
-    const appliedNames = shared.messages.map((m) => m.details?.name);
+    const appliedNames = shared.toasts.map((t) => t.replace(/^Switched to role (\S+).*$/, "$1"));
     expect(appliedNames).toContain("bare");
-    expect(shared.messages.find((m) => m.details?.name === "bare")?.content).toBe(
+    expect(shared.toasts.find((t) => t.startsWith("Switched to role bare"))).toBe(
       "Switched to role bare",
     );
     // The new session must NOT have started with the default pi role.
     expect(appliedNames).not.toContain("pi");
     expect(shared.sessionNames.some((n) => n.endsWith("- bare"))).toBe(true);
+    // Notifications must never reach the LLM context (no sendMessage).
+    expect(shared.sendMessage).not.toHaveBeenCalled();
   });
 
   it("cancelled --reset clears the handoff; the next session falls back to the default role", async () => {
@@ -164,14 +172,16 @@ describe("/role <name> --reset cross-session handoff", () => {
 
     const roleCmd = s1.commands.get("role")!;
     await roleCmd.handler("bare --reset", s1.ctx);
-    expect(shared.messages).toHaveLength(0);
+    // The cancel surfaces its own toast, but no role-switch notification.
+    expect(shared.toasts).toEqual(['Role switch to "bare" cancelled.']);
 
     // A later manual new-session must not resurrect the cancelled handoff.
     s2.ctx.newSession = async () => ({ cancelled: false });
     await s2.emitSessionStart("new");
 
-    const appliedNames = shared.messages.map((m) => m.details?.name);
-    expect(appliedNames).toEqual(["pi"]); // default fallback, not bare
+    const appliedNames = shared.toasts.map((t) => t.replace(/^Switched to role (\S+).*$/, "$1"));
+    expect(appliedNames).toEqual(['Role switch to "bare" cancelled.', "pi"]); // default fallback, not bare
+    expect(shared.sendMessage).not.toHaveBeenCalled();
   });
 
   it("plain /role <name> (no --reset) still applies mid-session", async () => {
@@ -180,9 +190,10 @@ describe("/role <name> --reset cross-session handoff", () => {
 
     await s1.commands.get("role")!.handler("bare", s1.ctx);
 
-    const appliedNames = shared.messages.map((m) => m.details?.name);
+    const appliedNames = shared.toasts.map((t) => t.replace(/^Switched to role (\S+).*$/, "$1"));
     expect(appliedNames).toEqual(["bare"]);
-    expect(shared.messages[0]?.content).toBe("Switched to role bare");
+    expect(shared.toasts[0]).toBe("Switched to role bare");
+    expect(shared.sendMessage).not.toHaveBeenCalled();
   });
 
   it("session_start with reason 'startup' is silent and uses the default role", async () => {
@@ -191,7 +202,7 @@ describe("/role <name> --reset cross-session handoff", () => {
 
     await s1.emitSessionStart("startup");
 
-    expect(shared.messages).toHaveLength(0); // no "Switched to ..." banner
+    expect(shared.toasts).toHaveLength(0); // no "Switched to ..." banner
     expect(shared.sessionNames.some((n) => n.endsWith("- pi"))).toBe(true);
   });
 });

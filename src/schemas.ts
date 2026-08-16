@@ -318,13 +318,6 @@ export type ActiveRoleState = Static<typeof ActiveRoleStateSchema>;
 export const ACTIVE_ROLE_ENTRY_TYPE = "pi-roles:active-role" as const;
 
 /**
- * Custom message type used by `pi.sendMessage` for user-visible role
- * notifications ("Switched to role X"). Centralized so we can register a
- * consistent message renderer.
- */
-export const ROLE_NOTIFICATION_MESSAGE_TYPE = "pi-roles:notification" as const;
-
-/**
  * Status key for `ctx.ui.setStatus(STATUS_KEY, ...)`. Single key so updates
  * replace the previous status atomically.
  */

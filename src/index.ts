@@ -28,14 +28,13 @@
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
-import { applyRole, effectiveIntercomMode, resetSession, type RoleNotificationDetails } from "./apply.ts";
+import { applyRole, effectiveIntercomMode, resetSession } from "./apply.ts";
 import { intercomPromptAddendum, isIntercomAvailable } from "./intercom.ts";
 import { discoverRoles, findBuiltInRole, resolveRole, RoleResolutionError } from "./roles.ts";
 import {
   ACTIVE_ROLE_ENTRY_TYPE,
   BUILTIN_PI_ROLE_NAME,
   PI_DEFAULT_PROMPT_MARKER,
-  ROLE_NOTIFICATION_MESSAGE_TYPE,
   type ActiveRoleState,
   type PiRolesSettings,
   type RawRole,
@@ -119,19 +118,6 @@ export default function (pi: ExtensionAPI): void {
   pi.registerFlag(FLAG_NAME, {
     type: "string",
     description: "Launch as the named pi-roles role (e.g. --role architect).",
-  });
-
-  // ----------------------------------------------------------------- renderer
-  // Render "Switched to role X" notifications as a single dim line. Without
-  // this, the custom message type would surface as raw JSON in the TUI.
-  pi.registerMessageRenderer<RoleNotificationDetails>(ROLE_NOTIFICATION_MESSAGE_TYPE, () => {
-    // Returning `undefined` lets Pi fall back to the default custom-message
-    // renderer, which prints `content`. That's exactly what we want — the
-    // content string ("Switched to role X") is already user-facing. The
-    // renderer is registered so `display: true` doesn't get treated as a
-    // raw-JSON dump if a future Pi version starts requiring an explicit
-    // renderer for custom types.
-    return undefined;
   });
 
   // --------------------------------------------------------------- session_start
