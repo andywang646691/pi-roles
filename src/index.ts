@@ -19,6 +19,11 @@
  * live in this extension instance". Pi reloads spin up a fresh module, at
  * which point we restore from the most recent `pi-roles:active-role` entry
  * in the session log.
+ *
+ * Scoping note: everything in `state` is per-session and lives inside the
+ * factory closure. Only `pendingRoleAfterReset` lives at true module scope
+ * (see its declaration) — it is the one piece of state that must survive
+ * `ctx.newSession()`, and pi re-invokes the factory for every new session.
  */
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
@@ -44,11 +49,28 @@ const FLAG_NAME = "role";
 const ENV_VAR = "PI_ROLE";
 const SUBCOMMANDS = ["list", "current", "reload"] as const;
 
+/**
+ * Role name to apply on the NEXT `session_start` with reason "new", set by
+ * `/role <name> --reset` and consumed+cleared by the session_start handler.
+ *
+ * This MUST live at true module scope, NOT inside the factory closure: pi
+ * re-invokes the extension factory for every session (new ExtensionRunner
+ * -> loadExtension -> factory(api)), so any state captured in the closure
+ * is recreated per session and the handoff would be lost — the new session
+ * would silently fall back to the default `pi` role (regression fixed in
+ * 0.3.x: `--reset` always landed on pi).
+ *
+ * The module instance itself IS reused across sessions within a process
+ * (jiti factory cache, keyed by cwd + generation), so this variable
+ * survives `ctx.newSession()`. `/reload` re-imports the module and loses
+ * it, but reload/resume restore from the session log
+ * (`pi-roles:active-role` entry), which is independent of this flag.
+ */
+let pendingRoleAfterReset: string | null = null;
+
 interface RuntimeState {
   /** Live role applied to this session, or null before first apply. */
   activeRole: ResolvedRole | null;
-  /** Set by `/role <name> --reset` so the next session_start (reason="new") applies it. */
-  pendingRoleAfterReset: string | null;
   /** Cached discovery result; refreshed on session_start, every `/role` invocation, and `/role reload`. */
   roles: RawRole[];
   /** Shadowed roles found at lower-precedence scopes; shown in `/role list`. */
@@ -75,7 +97,6 @@ interface RuntimeState {
 export default function (pi: ExtensionAPI): void {
   const state: RuntimeState = {
     activeRole: null,
-    pendingRoleAfterReset: null,
     roles: [],
     shadowed: [],
     settings: {},
@@ -128,9 +149,9 @@ export default function (pi: ExtensionAPI): void {
     let preservedIntent: string | undefined;
     let silent = false;
 
-    if (state.pendingRoleAfterReset) {
-      targetName = state.pendingRoleAfterReset;
-      state.pendingRoleAfterReset = null;
+    if (pendingRoleAfterReset) {
+      targetName = pendingRoleAfterReset;
+      pendingRoleAfterReset = null;
       // intent is intentionally cleared on --reset (session is a fresh start).
     } else if ((event.reason === "reload" || event.reason === "resume") && restored) {
       targetName = restored.name;
@@ -225,10 +246,10 @@ export default function (pi: ExtensionAPI): void {
         // session-bound captured state and synchronously fires session_start
         // before returning, so we can't apply the role after newSession()
         // resolves and expect mid-session ordering to hold.
-        state.pendingRoleAfterReset = name;
+        pendingRoleAfterReset = name;
         const result = await resetSession(ctx);
         if (result.cancelled) {
-          state.pendingRoleAfterReset = null;
+          pendingRoleAfterReset = null;
           ctx.ui.notify(`Role switch to "${name}" cancelled.`, "info");
         }
         return;

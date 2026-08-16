@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`/role <name> --reset` now actually applies the requested role.** The
+  handoff role name lived in the extension factory closure, but pi
+  re-invokes the factory on every new session, so the flag was lost and
+  every `--reset` silently started the new session with the default `pi`
+  role. The handoff now lives at true module scope, which pi's module cache
+  keeps alive across `ctx.newSession()` within a process. Regression tests
+  added in `test/reset.test.ts` that simulate pi's per-session factory
+  re-invocation.
+
 ### Changed
 
 - **Default role is now `pi`** (Pi's default expert coding agent) instead of
