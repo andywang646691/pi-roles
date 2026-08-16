@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Title generation no longer crashes when the runtime goes stale mid-flight
+  (`-p`/print mode).** `generateAndApplyTitle` ran fire-and-forget, but in
+  print mode the completion call often outlives the session teardown
+  (the process exits right after the turn), so the post-await apply —
+  `pi.setSessionName`, `ui.setStatus`, `pi.appendEntry` — threw
+  `"This extension ctx is stale after session replacement or reload"` and
+  the intent was never applied. The apply block is now guarded: on a stale
+  runtime the intent is recorded in memory and the session-name/status/
+  persistence writes are skipped cleanly (there is no live session left to
+  update). Interactive sessions are unaffected — there the writes land
+  mid-turn and the session log gets the updated name as before.
 - **`/role <name> --reset` now actually applies the requested role.** The
   handoff role name lived in the extension factory closure, but pi
   re-invokes the factory on every new session, so the flag was lost and

@@ -504,6 +504,45 @@ describe("generateAndApplyTitle", () => {
     expect(state.titleInFlight).toBe(false);
   });
 
+  it("stale runtime at apply: setSessionName throws → skipped cleanly, no crash", async () => {
+    // Reproduces the -p mode failure: title generation finishes AFTER the
+    // session was torn down, so pi.setSessionName() throws the assertActive
+    // stale error. The apply block must skip, not crash, and must not
+    // surface a spurious notify.
+    const state = makeState();
+    const setSessionName = vi.fn(() => {
+      throw new Error(
+        "This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload().",
+      );
+    });
+    const appendEntry = vi.fn();
+    const ui = { notify: vi.fn(), setStatus: vi.fn() };
+    const pi = { setSessionName, appendEntry } as unknown as ExtensionAPI;
+    const ctx = {
+      modelRegistry: { find: vi.fn(() => undefined), getAll: vi.fn(() => []) },
+      model: { provider: "p", id: "m" } as unknown as Model<any>,
+      hasUI: true,
+      ui,
+    } as unknown as ExtensionContext;
+    const completeFn = vi.fn(async () => makeAssistantMessage("an intent"));
+
+    await expect(
+      generateAndApplyTitle({
+        prompt: "do the thing",
+        state,
+        pi,
+        ctx,
+        configuredTitleModel: undefined,
+        completeFn,
+      }),
+    ).resolves.toBeUndefined();
+    expect(state.intent).toBe("an intent");
+    expect(appendEntry).not.toHaveBeenCalled();
+    expect(ui.setStatus).not.toHaveBeenCalled();
+    expect(ui.notify).not.toHaveBeenCalled();
+    expect(state.titleInFlight).toBe(false);
+  });
+
   it("sets titleInFlight=true during the LLM call", async () => {
     const state = makeState();
     let observed: boolean | undefined;

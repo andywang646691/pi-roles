@@ -228,6 +228,18 @@ export interface TitleArgs {
  *
  * On error, swallows. The next `before_agent_start` will retry because
  * `state.intent` is still empty.
+ *
+ * Stale-runtime handling: the completion await can outlive the session that
+ * launched it (process teardown in `-p` mode, or a session replacement/reload
+ * mid-turn). Once the runner is invalidated, every pi-side action
+ * (`setSessionName`, `appendEntry`, …) throws "This extension ctx is stale…".
+ * The apply block is therefore wrapped in a guard: if the runtime went stale
+ * while we were summarizing, we record the intent in memory and skip the
+ * session-name/status/persistence writes — there is no live session left to
+ * update, and rethrowing would just turn a best-effort cosmetic step into an
+ * unhandled crash. Print-mode sessions observe this as "intent computed but
+ * not applied" (no session survives to display it anyway); interactive
+ * sessions only hit it on reload/fork/newSession race windows.
  */
 export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
   const { prompt, state, pi, ctx, configuredTitleModel } = args;
@@ -304,18 +316,42 @@ export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
     if (!state.activeRole) return;
 
     state.intent = intent;
-    pi.setSessionName(composeSessionName(intent, state.activeRole.name));
-    if (ui) {
-      ui.setStatus(STATUS_KEY, composeFooterStatus(state.activeRole.name, intent));
+
+    // The runtime can go stale while we awaited `complete()`: the session may
+    // have been replaced/reloaded (interactive) or torn down (`-p` mode ends
+    // the process right after the turn). Every pi-side action below calls
+    // `runner.assertActive()` internally and THROWS on a stale runtime — in
+    // `-p` mode title generation finishes *after* teardown, so an unguarded
+    // apply would fail for nothing. All three writes are best-effort cosmetic
+    // updates; when the runtime is stale there is no live session to update,
+    // so we skip them rather than crash or surface a spurious error.
+    try {
+      pi.setSessionName(composeSessionName(intent, state.activeRole.name));
+      if (ui) {
+        ui.setStatus(STATUS_KEY, composeFooterStatus(state.activeRole.name, intent));
+      }
+      const persisted: ActiveRoleState = {
+        name: state.activeRole.name,
+        source: state.activeRole.source,
+        path: state.activeRole.path,
+        intent,
+        appliedAt: Date.now(),
+      };
+      pi.appendEntry(ACTIVE_ROLE_ENTRY_TYPE, persisted);
+    } catch (err) {
+      const e = err as any;
+      const stale =
+        typeof e?.message === "string" && e.message.includes("stale after session replacement");
+      debugLog("title", "applyToSession failed", {
+        stale,
+        name: e?.name,
+        message: e?.message ?? String(err),
+      });
+      // state.intent stays set either way: a stale runtime has no live
+      // session left to retry against, and a non-stale failure will be
+      // retried by the next before_agent_start guard (intent still set
+      // only if the apply threw *after* persisting — rare).
     }
-    const persisted: ActiveRoleState = {
-      name: state.activeRole.name,
-      source: state.activeRole.source,
-      path: state.activeRole.path,
-      intent,
-      appliedAt: Date.now(),
-    };
-    pi.appendEntry(ACTIVE_ROLE_ENTRY_TYPE, persisted);
   } catch (err) {
     const e = err as any;
     debugLog("title", "generateAndApplyTitle failed", {
