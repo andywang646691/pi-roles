@@ -236,6 +236,13 @@ export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
   // main agent loop does. Tests inject a fake.
   const completeFn = args.completeFn ?? ((model, context) => ctx.modelRegistry.complete(model, context));
 
+  // Snapshot the UI handle BEFORE any await. `ctx.hasUI` / `ctx.ui` getters
+  // call runner.assertActive(), which throws once the runtime goes stale
+  // (session replacement/reload, or process teardown in `-p` mode). Reading
+  // them after the completion await — e.g. inside the catch block — would
+  // replace the swallowed error with an unhandled crash.
+  const ui = ctx.hasUI ? ctx.ui : undefined;
+
   debugLog("title", "generateAndApplyTitle entered", {
     hasIntent: !!state.intent,
     inFlight: state.titleInFlight,
@@ -279,8 +286,8 @@ export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
     if (stopReason === "error") {
       const errMsg = (message as any)?.errorMessage ?? "unknown error";
       debugLog("title", "complete stopReason=error", { errorMessage: errMsg });
-      if (!state.titleErrorShown && ctx.hasUI) {
-        ctx.ui.notify(
+      if (!state.titleErrorShown && ui) {
+        ui.notify(
           `pi-roles: title model failed (${errMsg}). Set settings.titleModel to a model with credentials.`,
           "warning",
         );
@@ -298,8 +305,8 @@ export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
 
     state.intent = intent;
     pi.setSessionName(composeSessionName(intent, state.activeRole.name));
-    if (ctx.hasUI) {
-      ctx.ui.setStatus(STATUS_KEY, composeFooterStatus(state.activeRole.name, intent));
+    if (ui) {
+      ui.setStatus(STATUS_KEY, composeFooterStatus(state.activeRole.name, intent));
     }
     const persisted: ActiveRoleState = {
       name: state.activeRole.name,
@@ -321,8 +328,8 @@ export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
       modelId: (model as any)?.id,
       modelProvider: (model as any)?.provider ?? (model as any)?.api?.provider,
     });
-    if (!state.titleErrorShown && ctx.hasUI) {
-      ctx.ui.notify(
+    if (!state.titleErrorShown && ui) {
+      ui.notify(
         `pi-roles: title generation failed (${e?.message ?? String(err)}). Set settings.titleModel to a model with credentials.`,
         "warning",
       );

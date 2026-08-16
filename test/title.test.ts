@@ -456,6 +456,54 @@ describe("generateAndApplyTitle", () => {
     expect(appendEntry).not.toHaveBeenCalled();
   });
 
+  it("stale ctx mid-flight: no unhandled crash, intent still applied", async () => {
+    // Reproduces the -p mode crash: after the completion await the runtime
+    // is torn down, so the ctx.hasUI / ctx.ui getters throw. The UI handle
+    // must be snapshotted before the await, not read after it.
+    const state = makeState();
+    const { pi, setSessionName, appendEntry } = makePi();
+    let stale = false;
+    const ui = { notify: vi.fn(), setStatus: vi.fn() };
+    const ctx = {
+      modelRegistry: {
+        find: vi.fn(() => undefined),
+        getAll: vi.fn(() => []),
+      },
+      model: { provider: "p", id: "m" } as unknown as Model<any>,
+      get hasUI() {
+        if (stale) {
+          throw new Error("This extension ctx is stale after session replacement or reload.");
+        }
+        return true;
+      },
+      get ui() {
+        if (stale) {
+          throw new Error("This extension ctx is stale after session replacement or reload.");
+        }
+        return ui;
+      },
+    } as unknown as ExtensionContext;
+    const completeFn = vi.fn(async () => {
+      stale = true; // runtime torn down while we were awaiting
+      return makeAssistantMessage("an intent");
+    });
+    await expect(
+      generateAndApplyTitle({
+        prompt: "do the thing",
+        state,
+        pi,
+        ctx,
+        configuredTitleModel: undefined,
+        completeFn,
+      }),
+    ).resolves.toBeUndefined();
+    expect(state.intent).toBe("an intent");
+    expect(setSessionName).toHaveBeenCalledWith("an intent - architect");
+    expect(appendEntry).toHaveBeenCalledTimes(1);
+    expect(ui.setStatus).toHaveBeenCalledTimes(1);
+    expect(state.titleInFlight).toBe(false);
+  });
+
   it("sets titleInFlight=true during the LLM call", async () => {
     const state = makeState();
     let observed: boolean | undefined;
