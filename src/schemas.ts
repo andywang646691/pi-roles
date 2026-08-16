@@ -349,10 +349,3 @@ export const BUILTIN_ROLE_ASSISTANT_NAME = "role-assistant" as const;
  * value means the `pi` role can never drift from the installed pi.
  */
 export const PI_DEFAULT_PROMPT_MARKER = "__PI_ROLES_PI_DEFAULT_PROMPT__" as const;
-
-/**
- * Placeholder shown in the session name when intent hasn't been generated yet.
- * ComposeSessionName flips to `<intent> - <role>` format; when intent is empty,
- * this placeholder makes the session name readable instead of just "- role".
- */
-export const INTENT_PLACEHOLDER = "Intent not defined" as const;

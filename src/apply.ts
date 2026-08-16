@@ -27,7 +27,6 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import {
   ACTIVE_ROLE_ENTRY_TYPE,
-  INTENT_PLACEHOLDER,
   STATUS_KEY,
   type ActiveRoleState,
   type IntercomMode,
@@ -188,22 +187,32 @@ export function filterToolsForRuntime(
 }
 
 /**
- * Compose the session name in `<intent> - <role>` format. Uses INTENT_PLACEHOLDER
- * when intent is empty/undefined so the name stays readable (e.g.
- * `"<intent> - architect"`) rather than just `"- architect"`.
+ * Compose the session name in `<intent> - <role>` format.
+ *
+ * Returns `undefined` when intent is empty/undefined: there is no session
+ * name to write yet. Callers (applyRole) then pass an empty string to
+ * `pi.setSessionName("")`, which Pi treats as an explicit clear — restoring
+ * its native "first user prompt as title" behavior. We deliberately do NOT
+ * substitute a placeholder like "Intent not defined": the intent half only
+ * exists once the title model has produced it, and a placeholder would pin
+ * the title to a dead state whenever that network call fails.
  */
-export function composeSessionName(intent: string | undefined, roleName: string): string {
+export function composeSessionName(intent: string | undefined, roleName: string): string | undefined {
   const trimmed = (intent ?? "").trim();
-  const intentPart = trimmed.length > 0 ? trimmed : INTENT_PLACEHOLDER;
-  return `${intentPart} - ${roleName}`;
+  if (trimmed.length === 0) return undefined;
+  return `${trimmed} - ${roleName}`;
 }
 
 /**
- * Compose the footer status string shown in the status bar. Shows the role
- * name prefixed with "role:".
+ * Compose the footer status string shown in the status bar.
+ *
+ * Shows `<intent> - <role>` when an intent exists, otherwise just the role
+ * name. The footer's job is to show the active role; the intent half is an
+ * adornment that must never become a stuck placeholder (see
+ * `composeSessionName`).
  */
 export function composeFooterStatus(roleName: string, intent: string | undefined): string {
-  return composeSessionName(intent, roleName);
+  return composeSessionName(intent, roleName) ?? roleName;
 }
 
 // ---------------------------------------------------------------------------
@@ -225,9 +234,9 @@ export function composeFooterStatus(roleName: string, intent: string | undefined
  *      `setActiveTools`. We always overwrite; the `inherit` case skips
  *      this step entirely.
  *   4. Footer — `setStatus` so the role name shows in the status bar.
- *   5. Session name — `setSessionName` with the composed "role — intent"
- *      string. If we have a `preservedIntent` we use it, otherwise the
- *      first user message will trigger Phase 5's title generator.
+ *   5. Session name — `setSessionName` with the composed `<intent> - <role>`
+ *      (or an explicit clear when intent is absent, so Pi's native
+ *      first-prompt title shows through).
  *   6. Persist — `appendEntry` so `/reload` and `session_start` with
  *      reason="reload"|"resume" can restore the active role.
  *   7. Notify — `ctx.ui.notify` toast with the role name unless `silent`
@@ -304,8 +313,12 @@ export async function applyRole(
     ctx.ui.setStatus(STATUS_KEY, composeFooterStatus(role.name, options.preservedIntent));
   }
 
-  // 5. Session name
-  pi.setSessionName(composeSessionName(options.preservedIntent, role.name));
+  // 5. Session name — `<intent> - <role>` when intent exists, otherwise an
+  // explicit clear (`setSessionName("")`). Pi treats empty names as a clear
+  // and falls back to its native title logic (the first user prompt), so a
+  // failing/slow title model can never pin the title to a placeholder like
+  // "Intent not defined".
+  pi.setSessionName(composeSessionName(options.preservedIntent, role.name) ?? "");
 
   // 6. Persist
   const state: ActiveRoleState = {

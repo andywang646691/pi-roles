@@ -268,10 +268,10 @@ describe("filterToolsForRuntime", () => {
 });
 
 describe("composeSessionName", () => {
-  it("empty/undefined intent → INTENT_PLACEHOLDER - role", () => {
-    expect(composeSessionName(undefined, "architect")).toBe("Intent not defined - architect");
-    expect(composeSessionName("", "architect")).toBe("Intent not defined - architect");
-    expect(composeSessionName("   ", "architect")).toBe("Intent not defined - architect");
+  it("empty/undefined intent → undefined (no session name to write)", () => {
+    expect(composeSessionName(undefined, "architect")).toBeUndefined();
+    expect(composeSessionName("", "architect")).toBeUndefined();
+    expect(composeSessionName("   ", "architect")).toBeUndefined();
   });
   it("non-empty → '<intent> - <role>'", () => {
     expect(composeSessionName("designing schema", "architect")).toBe(
@@ -281,10 +281,10 @@ describe("composeSessionName", () => {
 });
 
 describe("composeFooterStatus", () => {
-  it("undefined intent → INTENT_PLACEHOLDER - role", () => {
-    expect(composeFooterStatus("architect", undefined)).toBe("Intent not defined - architect");
-    expect(composeFooterStatus("architect", "")).toBe("Intent not defined - architect");
-    expect(composeFooterStatus("architect", "   ")).toBe("Intent not defined - architect");
+  it("undefined intent → role name only (no placeholder)", () => {
+    expect(composeFooterStatus("architect", undefined)).toBe("architect");
+    expect(composeFooterStatus("architect", "")).toBe("architect");
+    expect(composeFooterStatus("architect", "   ")).toBe("architect");
   });
   it("non-empty intent → '<intent> - <role>'", () => {
     expect(composeFooterStatus("architect", "designing schema")).toBe("designing schema - architect");
@@ -313,8 +313,8 @@ describe("applyRole", () => {
     expect(fake.pi.setModel).toHaveBeenCalledTimes(1);
     expect(fake.pi.setThinkingLevel).toHaveBeenCalledWith("high");
     expect(fake.pi.setActiveTools).toHaveBeenCalledWith(["read", "write"]);
-    expect(fake.ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "Intent not defined - test");
-    expect(fake.pi.setSessionName).toHaveBeenCalledWith("Intent not defined - test");
+    expect(fake.ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "test");
+    expect(fake.pi.setSessionName).toHaveBeenCalledWith("");
     expect(fake.pi.appendEntry).toHaveBeenCalledWith(
       ACTIVE_ROLE_ENTRY_TYPE,
       expect.objectContaining({ name: "test", source: "project" }),
@@ -396,6 +396,19 @@ describe("applyRole", () => {
       ACTIVE_ROLE_ENTRY_TYPE,
       expect.objectContaining({ intent: "wiring schemas" }),
     );
+  });
+
+  it("no intent → clears the session name so Pi's native first-prompt title shows", async () => {
+    // Regression: pi-roles used to pin the title to "Intent not defined - role"
+    // whenever intent was missing. That placeholder overrides Pi's own title
+    // logic (first user prompt) and depends on the title model's network call
+    // succeeding — if upstream fails, the title is stuck forever. applyRole
+    // must instead clear the name (""), letting Pi fall back to its native
+    // behavior until (if ever) a real intent is generated.
+    const fake = makeFake();
+    await applyRole(makeRole({ name: "architect" }), applyCtxOf(fake));
+    expect(fake.pi.setSessionName).toHaveBeenCalledWith("");
+    expect(fake.ctx.ui.setStatus).toHaveBeenCalledWith(STATUS_KEY, "architect");
   });
 
   it("hasUI=false skips setStatus", async () => {

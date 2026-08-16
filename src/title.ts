@@ -14,8 +14,9 @@
  *
  * Why not generate eagerly on `applyRole`? Because we don't have a user
  * message yet at apply time. The first prompt is what reveals intent, and
- * Pi only surfaces it via the BeforeAgentStartEvent. Until that fires, the
- * session name shows `<intent> - <role>` via INTENT_PLACEHOLDER.
+ * Pi only surfaces it via the BeforeAgentStartEvent. Until that fires, no
+ * session name is written (applyRole clears it), so Pi's native
+ * first-prompt title logic shows through instead of a placeholder.
  *
  * Why fire-and-forget rather than blocking? Title generation hits a (cheap)
  * model and adds noticeable latency to the first turn. Blocking would mean
@@ -93,8 +94,8 @@ const MAX_WORDS = 10;
  *      truncation cut mid-clause.
  *
  * Returns "" for empty input. Callers must check before persisting — when
- * intent is empty, composeSessionName uses INTENT_PLACEHOLDER, leaving the
- * session name as `<intent> - <role>`.
+ * intent is empty, no session name is written and Pi's native first-message
+ * title stays in effect.
  */
 export function extractTitle(raw: string): string {
   if (!raw) return "";
@@ -326,7 +327,7 @@ export async function generateAndApplyTitle(args: TitleArgs): Promise<void> {
     // updates; when the runtime is stale there is no live session to update,
     // so we skip them rather than crash or surface a spurious error.
     try {
-      pi.setSessionName(composeSessionName(intent, state.activeRole.name));
+      pi.setSessionName(composeSessionName(intent, state.activeRole.name) ?? "");
       if (ui) {
         ui.setStatus(STATUS_KEY, composeFooterStatus(state.activeRole.name, intent));
       }

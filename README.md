@@ -218,7 +218,7 @@ Resolution order: `--role` > `PI_ROLE` > `defaultRole` setting > built-in `pi`.
 
 ## Session name and footbar
 
-Each session is named `<role-name>` (and, once the title-generation phase ships, `<role-name> — <intent>`, where `<intent>` is a short summary of your first user message). The role-name prefix updates when you `/role` to a different role.
+Each session is named `<intent> - <role>`, where `<intent>` is a short (5–10 word) summary of your first user message generated asynchronously via the title model. Until an intent is generated — and permanently if the title model can't be reached — the session name stays unset, so Pi keeps its native first-prompt title logic instead of showing a placeholder. The role suffix updates when you `/role` to a different role.
 
 The session name is set via Pi's native `pi.setSessionName()` API, so:
 

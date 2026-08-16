@@ -110,7 +110,7 @@ is fully owned by `roles.ts`; this module only mutates session state.
 | **Model resolution** — parse `provider/id`, scan registry, handle bare-id ambiguity | `parseModelId(raw)`, `findModelInRegistry(registry, raw)` |
 | **Intercom mode** — per-role > global default > `"off"` | `effectiveIntercomMode(role, globalDefault)` |
 | **Tool filtering** — resolve `mcp:*` entries against runtime toolset, add `intercom` when mode ≠ off | `filterToolsForRuntime(directive, ...)` |
-| **Session name** — compose `<intent> - <role>` (with `"Intent not defined"` placeholder when intent is empty) | `composeSessionName(roleName, intent)` |
+| **Session name** — compose `<intent> - <role>`; `undefined` without intent (caller clears so Pi's native first-prompt title shows) | `composeSessionName(intent, roleName)` |
 | **Full apply** — model → thinking → tools → footer → session name → persist → notify | `applyRole(role, ctx, options)` |
 | **Reset** — wrap `ctx.newSession()` (the `/role <name> --reset` primitive) | `resetSession(ctx)` |
 
@@ -218,8 +218,8 @@ session_start (reason="startup")
               ├─ pi.setModel(...)
               ├─ pi.setThinkingLevel(...)
               ├─ pi.setActiveTools(...)
-              ├─ ctx.ui.setStatus(STATUS_KEY, "Intent not defined - architect")
-              ├─ pi.setSessionName("Intent not defined - architect")
+              ├─ ctx.ui.setStatus(STATUS_KEY, "architect")  [role only, no intent yet]
+              ├─ pi.setSessionName("")  [clear → Pi shows first-prompt title]
               ├─ pi.appendEntry(ACTIVE_ROLE_ENTRY_TYPE, state)
               └─ pi.sendMessage(notification)
 ```
@@ -233,6 +233,8 @@ before_agent_start fires
   │     void generateAndApplyTitle(...)    [fire-and-forget]
   │       └─ on success: pi.setSessionName("Design auth schema - architect")
   │                      ctx.ui.setStatus(STATUS_KEY, "Design auth schema - architect")
+  │         on failure/never: session name stays cleared — Pi's native
+  │         first-prompt title remains in effect
   │
   └─► composeSystemPrompt(state, pi)
         │

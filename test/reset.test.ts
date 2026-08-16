@@ -159,7 +159,10 @@ describe("/role <name> --reset cross-session handoff", () => {
     );
     // The new session must NOT have started with the default pi role.
     expect(appliedNames).not.toContain("pi");
-    expect(shared.sessionNames.some((n) => n.endsWith("- bare"))).toBe(true);
+    // Intent is deliberately cleared on --reset (fresh start): the session
+    // name is cleared rather than pinned to a placeholder, so Pi's native
+    // first-prompt title logic shows through until a new intent is generated.
+    expect(shared.sessionNames.at(-1)).toBe("");
     // Notifications must never reach the LLM context (no sendMessage).
     expect(shared.sendMessage).not.toHaveBeenCalled();
   });
@@ -206,7 +209,11 @@ describe("/role <name> --reset cross-session handoff", () => {
     await s1.emitSessionStart("startup");
 
     expect(shared.toasts).toHaveLength(0); // no "Switched to ..." banner
-    expect(shared.sessionNames.some((n) => n.endsWith("- pi"))).toBe(true);
+    // Silent startup applies the default role — verified via the persisted
+    // active-role entry. The session name stays cleared (no intent yet), so
+    // Pi's native first-prompt title logic remains in effect.
+    expect((shared.appended.at(-1)?.data as { name?: string }).name).toBe("pi");
+    expect(shared.sessionNames.at(-1)).toBe("");
   });
 
   it("session_start with reason 'startup' on an existing session restores role + intent (pi -c / pi -r)", async () => {
@@ -266,7 +273,7 @@ describe("/role <name> --reset cross-session handoff", () => {
     expect(shared.toasts).toHaveLength(0);
   });
 
-  it("a persisted active-role entry without intent restores role with the placeholder name", async () => {
+  it("a persisted active-role entry without intent restores the role with the title cleared", async () => {
     // e.g. the user never sent a message (title-gen never ran) before exiting.
     const factory = await loadFactory();
     const persisted = {
@@ -283,8 +290,9 @@ describe("/role <name> --reset cross-session handoff", () => {
 
     await s1.emitSessionStart("startup");
 
-    // Role restored, intent falls back to the placeholder (nothing to carry).
-    expect(shared.sessionNames.at(-1)).toBe("Intent not defined - bare");
+    // Role restored; no intent to carry, so the session name is cleared
+    // (never "Intent not defined") and Pi's native first-prompt title shows.
+    expect(shared.sessionNames.at(-1)).toBe("");
   });
 
   it("recovers the last-known intent when the latest entry lost it (heals pre-fix damage)", async () => {

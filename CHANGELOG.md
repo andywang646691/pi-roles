@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Pi's native first-prompt title logic is no longer overridden by a
+  placeholder.** `applyRole` used to call `pi.setSessionName("Intent not
+  defined - <role>")` whenever no intent had been generated yet. That
+  placeholder depends on the title model's network call: if upstream fails
+  (outage, missing credentials, unresolvable model), the title stayed pinned
+  to `"Intent not defined - <role>"` indefinitely and Pi's own session
+  title — derived from the first user prompt — was masked. `applyRole` now
+  writes the session name only when a real intent exists, and passes `""`
+  (Pi's explicit clear) otherwise, so the TUI falls back to showing the
+  first prompt. The footer status likewise shows just the role name until an
+  intent arrives. `INTENT_PLACEHOLDER` was removed; `composeSessionName`
+  returns `undefined` for absent intent.
+
 - **Exit-and-relaunch no longer wipes the session role + intent.** Pi's
   initial-runtime path never passes a `sessionStartEvent`, so every launch
   that opens an existing session — `pi -c`, `pi -r`, `pi --session <path>` —
