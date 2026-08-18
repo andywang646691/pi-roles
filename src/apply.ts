@@ -50,6 +50,12 @@ export interface ApplyContext {
   warnOnMissingMcp: boolean;
   /** Optional global default; merged in `effectiveIntercomMode`. */
   intercomMode?: IntercomMode;
+  /**
+   * Pi's fresh-session active tool set, snapshot on `session_start` before
+   * any role is applied. Consumed by the `{ kind: "default" }` tools
+   * directive (produced for chains that transitively include built-in pi).
+   */
+  defaultTools: ReadonlyArray<string>;
 }
 
 export interface ApplyOptions {
@@ -135,6 +141,10 @@ export function effectiveIntercomMode(
  *   - Non-`mcp:*` names that aren't recognized are passed through with a
  *     soft warning. Other extensions register tools later than us, and we
  *     can't reliably detect that timing — so we trust the user's list.
+ *   - `{ kind: "all" }` — every registered tool (`availableToolNames`),
+ *     including mcp:* entries that are actually registered.
+ *   - `{ kind: "default" }` — the session-start baseline tool set
+ *     (`defaultTools`), restored verbatim.
  *   - When `intercomMode !== "off"` and the `intercom` tool is registered,
  *     ensure `intercom` is in the active list (we add it if absent).
  */
@@ -144,6 +154,7 @@ export function filterToolsForRuntime(
   intercomMode: IntercomMode,
   intercomAvailable: boolean,
   warnOnMissingMcp: boolean,
+  defaultTools: ReadonlyArray<string> = [],
 ): { kind: "set"; names: string[]; warnings: string[] } | { kind: "inherit"; warnings: string[] } {
   const warnings: string[] = [];
 
@@ -152,6 +163,22 @@ export function filterToolsForRuntime(
     // mutate the active toolset out from under the user when they didn't
     // ask us to. Inheritance is a true "leave it alone".
     return { kind: "inherit", warnings };
+  }
+
+  if (directive.kind === "all") {
+    const kept = [...availableToolNames];
+    if (intercomMode !== "off" && intercomAvailable && !kept.includes("intercom")) {
+      kept.push("intercom");
+    }
+    return { kind: "set", names: kept, warnings };
+  }
+
+  if (directive.kind === "default") {
+    const kept = [...defaultTools];
+    if (intercomMode !== "off" && intercomAvailable && !kept.includes("intercom")) {
+      kept.push("intercom");
+    }
+    return { kind: "set", names: kept, warnings };
   }
 
   const kept: string[] = [];
@@ -297,6 +324,7 @@ export async function applyRole(
     intercomMode,
     intercomAvailable,
     applyCtx.warnOnMissingMcp,
+    applyCtx.defaultTools,
   );
   warnings.push(...filtered.warnings);
   if (filtered.kind === "set") {

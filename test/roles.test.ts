@@ -16,7 +16,7 @@ import {
   RoleResolutionError,
   discoverRoles,
   findBuiltInRole,
-  normalizeTools,
+  normalizeCollection,
   parseRoleSource,
   resolveRole,
 } from "../src/roles.ts";
@@ -46,6 +46,7 @@ function fm(opts: {
   model?: string;
   thinking?: string;
   tools?: string | null | undefined;
+  skills?: string | null | undefined;
   intercom?: string;
   extends?: string;
   body?: string;
@@ -62,6 +63,14 @@ function fm(opts: {
       // omit
     } else {
       lines.push(`tools: ${JSON.stringify(opts.tools)}`);
+    }
+  }
+  if ("skills" in opts) {
+    if (opts.skills === null) lines.push("skills:");
+    else if (opts.skills === undefined) {
+      // omit
+    } else {
+      lines.push(`skills: ${JSON.stringify(opts.skills)}`);
     }
   }
   return `---\n${lines.join("\n")}\n---\n${opts.body ?? "Body for " + opts.name}`;
@@ -140,27 +149,33 @@ describe("parseRoleSource", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Tools tri-state
+// Collection (tools / skills) normalization
 // ---------------------------------------------------------------------------
 
-describe("normalizeTools", () => {
+describe("normalizeCollection", () => {
   it("absent → inherit", () => {
-    expect(normalizeTools(undefined)).toEqual({ kind: "inherit" });
+    expect(normalizeCollection(undefined)).toEqual({ kind: "inherit" });
   });
   it("null → set:[]", () => {
-    expect(normalizeTools(null)).toEqual({ kind: "set", names: [] });
+    expect(normalizeCollection(null)).toEqual({ kind: "set", names: [] });
   });
   it("empty string → set:[]", () => {
-    expect(normalizeTools("")).toEqual({ kind: "set", names: [] });
+    expect(normalizeCollection("")).toEqual({ kind: "set", names: [] });
   });
   it("'a, b, c' → set:[a,b,c]", () => {
-    expect(normalizeTools("read, write,  edit")).toEqual({
+    expect(normalizeCollection("read, write,  edit")).toEqual({
       kind: "set",
       names: ["read", "write", "edit"],
     });
   });
+  it("'all' → all kind", () => {
+    expect(normalizeCollection("all")).toEqual({ kind: "all" });
+  });
+  it("' all ' (whitespace) → all kind", () => {
+    expect(normalizeCollection("  all  ")).toEqual({ kind: "all" });
+  });
   it("preserves mcp:* entries verbatim", () => {
-    expect(normalizeTools("read, mcp:fs, mcp:github")).toEqual({
+    expect(normalizeCollection("read, mcp:fs, mcp:github")).toEqual({
       kind: "set",
       names: ["read", "mcp:fs", "mcp:github"],
     });
@@ -279,6 +294,58 @@ describe("resolveRole", () => {
     const p = rawFromText(fm({ name: "p", tools: "read" }), "p");
     const c = rawFromText(fm({ name: "c", extends: "p" }), "c");
     expect(resolveRole("c", [p, c]).tools).toEqual({ kind: "set", names: ["read"] });
+  });
+
+  // ------------------------------------------------------- deterministic defaults
+
+  it("plain role without tools/skills resolves both to none (deterministic)", () => {
+    const r = rawFromText(fm({ name: "bare" }), "bare");
+    const resolved = resolveRole("bare", [r]);
+    expect(resolved.tools).toEqual({ kind: "set", names: [] });
+    expect(resolved.skills).toEqual({ kind: "set", names: [] });
+  });
+
+  it("built-in pi resolves tools to default (baseline) and skills to all", () => {
+    const pi = builtInRole(BUILTIN_PI_ROLE_NAME);
+    const resolved = resolveRole(BUILTIN_PI_ROLE_NAME, [pi]);
+    expect(resolved.tools).toEqual({ kind: "default" });
+    expect(resolved.skills).toEqual({ kind: "all" });
+  });
+
+  it("chain extending pi resolves tools to default and skills to all", () => {
+    const pi = builtInRole(BUILTIN_PI_ROLE_NAME);
+    const child = rawFromText(fm({ name: "arch", extends: BUILTIN_PI_ROLE_NAME }), "arch");
+    const resolved = resolveRole("arch", [pi, child]);
+    expect(resolved.tools).toEqual({ kind: "default" });
+    expect(resolved.skills).toEqual({ kind: "all" });
+  });
+
+  it("explicit tools on a pi-derived role wins over the default", () => {
+    const pi = builtInRole(BUILTIN_PI_ROLE_NAME);
+    const child = rawFromText(
+      fm({ name: "arch", extends: BUILTIN_PI_ROLE_NAME, tools: "read, bash" }),
+      "arch",
+    );
+    const resolved = resolveRole("arch", [pi, child]);
+    expect(resolved.tools).toEqual({ kind: "set", names: ["read", "bash"] });
+    expect(resolved.skills).toEqual({ kind: "all" }); // skills still inherited
+  });
+
+  it("explicit tools: all passes through to the all kind", () => {
+    const r = rawFromText(fm({ name: "alltools", tools: "all" }), "alltools");
+    expect(resolveRole("alltools", [r]).tools).toEqual({ kind: "all" });
+  });
+
+  it("explicit skills list merges through extends (leaf wins)", () => {
+    const p = rawFromText(fm({ name: "p", skills: "git" }), "p");
+    const c = rawFromText(fm({ name: "c", extends: "p", skills: "git, jira" }), "c");
+    expect(resolveRole("c", [p, c]).skills).toEqual({ kind: "set", names: ["git", "jira"] });
+  });
+
+  it("child skills:null explicitly disables inherited skills", () => {
+    const p = rawFromText(fm({ name: "p", skills: "git" }), "p");
+    const c = rawFromText(fm({ name: "c", extends: "p", skills: null }), "c");
+    expect(resolveRole("c", [p, c]).skills).toEqual({ kind: "set", names: [] });
   });
 });
 

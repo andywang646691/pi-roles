@@ -5,6 +5,7 @@ extends: architect
 model: anthropic/claude-opus-4-7
 thinking: medium
 tools: read, grep, find, ls, write, edit, bash, mcp:fs, mcp:github
+skills: all                       # inherits from architect unless overridden
 intercom: both
 ---
 

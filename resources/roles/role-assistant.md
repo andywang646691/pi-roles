@@ -33,7 +33,8 @@ Walk the user through the questions below in order. Ask one question at a time; 
 1. **Name** — must be a valid filename (lowercase, hyphens). Will become `<name>.md`.
 2. **Description** — one short line for `/role list` output and pickers.
 3. **Intended behavior** — what should this role do, and what should it not do? You'll turn this into the markdown body (the system prompt).
-4. **Tools** — comma-separated list (`read, grep, find, ls, write, edit`, etc.) or `none`. MCP tools use `mcp:server-name`. If unsure, suggest a sensible default for the described behavior.
+4. **Tools** — comma-separated list (`read, grep, find, ls, write, edit`, etc.), `all`, or `none`. MCP tools use `mcp:server-name`. If unsure, suggest a sensible default for the described behavior. **Absent `tools:` now means NO tools** (deterministic roles) — always suggest an explicit list or `extends: pi`.
+5. **Skills** (optional) — comma-separated skill names, `all` for every loaded skill, or skip for none. If the role does knowledge work, suggest `skills: all` (cheap progressive listing; full SKILL.md loads on demand).
 5. **Model** (optional) — `provider/id` form, e.g. `anthropic/claude-opus-4-7`. If skipped, the role inherits whatever model the session is currently using.
 6. **Thinking level** (optional) — `off | minimal | low | medium | high | xhigh`. If skipped, inherits.
 7. **Parent role** (optional) — name of an existing role to `extends`. The parent's body is prepended to this role's body and parent fields are inherited unless overridden.

@@ -54,7 +54,9 @@ describe("built-in role-assistant", () => {
     const resolved = resolveRole(BUILTIN_ROLE_ASSISTANT_NAME, result.roles);
     expect(resolved.name).toBe(BUILTIN_ROLE_ASSISTANT_NAME);
     expect(resolved.body.length).toBeGreaterThan(0);
-    expect(resolved.tools).toEqual({ kind: "inherit" });
+    // role-assistant doesn't extend pi: absent fields resolve to none.
+    expect(resolved.tools).toEqual({ kind: "set", names: [] });
+    expect(resolved.skills).toEqual({ kind: "set", names: [] });
   });
 });
 
@@ -75,7 +77,9 @@ describe("built-in pi role", () => {
     const resolved = resolveRole(BUILTIN_PI_ROLE_NAME, result.roles);
     expect(resolved.name).toBe(BUILTIN_PI_ROLE_NAME);
     expect(resolved.body).toBe(PI_DEFAULT_PROMPT_MARKER);
-    expect(resolved.tools).toEqual({ kind: "inherit" });
+    // pi chain: tools = fresh-session baseline, skills = all (marker carries them).
+    expect(resolved.tools).toEqual({ kind: "default" });
+    expect(resolved.skills).toEqual({ kind: "all" });
     expect(resolved.source).toBe("built-in");
   });
 });

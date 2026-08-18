@@ -26,6 +26,7 @@
  * `ctx.newSession()`, and pi re-invokes the factory for every new session.
  */
 
+import { formatSkillsForPrompt, type Skill } from "@earendil-works/pi-coding-agent";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
 import { applyRole, effectiveIntercomMode, resetSession } from "./apply.ts";
@@ -39,6 +40,7 @@ import {
   type PiRolesSettings,
   type RawRole,
   type ResolvedRole,
+  type SkillsDirective,
 } from "./schemas.ts";
 import { loadSettings } from "./settings.ts";
 import { generateAndApplyTitle } from "./title.ts";
@@ -91,6 +93,20 @@ interface RuntimeState {
    * is misconfigured or lacks credentials.
    */
   titleErrorShown: boolean;
+  /**
+   * Pi's fresh-session active tool set, captured on `session_start` BEFORE
+   * any role is applied. This is the pristine baseline that the
+   * `{ kind: "default" }` tools directive (chains extending built-in pi)
+   * restores — "what an unextended pi session would have". Snapshotting
+   * instead of hardcoding respects user global config and MCP auto-enable.
+   */
+  baselineTools: string[];
+  /**
+   * Key of the last skills warning set shown to the user (role name + joined
+   * warnings). `before_agent_start` fires every turn; we only notify once per
+   * distinct set so a misconfigured role can't spam toasts.
+   */
+  skillsWarnedKey: string | null;
 }
 
 export default function (pi: ExtensionAPI): void {
@@ -102,6 +118,8 @@ export default function (pi: ExtensionAPI): void {
     intent: undefined,
     titleInFlight: false,
     titleErrorShown: false,
+    baselineTools: [],
+    skillsWarnedKey: null,
   };
 
   /** Re-read settings + re-discover roles from disk. Centralized so every */
@@ -123,6 +141,11 @@ export default function (pi: ExtensionAPI): void {
   // --------------------------------------------------------------- session_start
   pi.on("session_start", async (event, ctx) => {
     refreshFromDisk(ctx.cwd);
+
+    // Snapshot the pristine toolset BEFORE any role touches it. This is the
+    // reference for the `tools` default directive (chains extending pi): a
+    // fresh session's active set, including user config and MCP auto-enable.
+    state.baselineTools = captureBaselineTools(pi);
 
     const restored = findRestoredState(ctx);
     debugLog("index", `session_start reason=${event.reason}`, restored ? { name: restored.name, intent: restored.intent } : undefined);
@@ -207,7 +230,19 @@ export default function (pi: ExtensionAPI): void {
         configuredTitleModel: state.settings.titleModel,
       });
     }
-    return composeSystemPrompt(state, pi, event?.systemPrompt);
+    const composed = composeSystemPrompt(state, pi, event?.systemPrompt, event?.systemPromptOptions?.skills);
+    if (composed?.skillWarnings?.length) {
+      // before_agent_start fires every turn; only surface a given warning set
+      // once per role application so a broken role can't spam toasts.
+      const key = `${state.activeRole?.name ?? "?"}|${composed.skillWarnings.join("\u241f")}`;
+      if (state.skillsWarnedKey !== key) {
+        state.skillsWarnedKey = key;
+        if (ctx.hasUI) {
+          for (const w of composed.skillWarnings) ctx.ui.notify(`pi-roles: ${w}`, "warning");
+        }
+      }
+    }
+    return composed ? { systemPrompt: composed.systemPrompt } : undefined;
   });
 
   // ---------------------------------------------------------------- /role
@@ -263,9 +298,12 @@ export default function (pi: ExtensionAPI): void {
  * Build the replacement system prompt for the current active role.
  *
  * Returns `undefined` when there's no active role (Pi keeps its default for
- * that turn). Otherwise returns `{ systemPrompt }` with the role body — and,
- * when intercom is requested AND the intercom tool is registered, a small
- * mode-specific addendum appended to the body.
+ * that turn). Otherwise returns `{ systemPrompt }` with the role body — plus,
+ * when the role opts into skills, the Agent-Skills XML listing, and when
+ * intercom is requested AND the intercom tool is registered, a small
+ * mode-specific addendum. Warning text (missing/unknown skills, ignored
+ * narrowing on extends:pi chains) comes back in `skillWarnings` so the caller
+ * can surface it once; it is intentionally NOT part of the prompt.
  *
  * The `baseSystemPrompt` is Pi's fully-built default system prompt for this
  * turn (`event.systemPrompt`). It's used only to substitute
@@ -274,6 +312,13 @@ export default function (pi: ExtensionAPI): void {
  * verbatim; custom role bodies are authoritative and never composed with
  * upstream prompt content.
  *
+ * `loadedSkills` is Pi's per-turn loaded skill set
+ * (`event.systemPromptOptions.skills`) — the same structured data Pi uses to
+ * render the default prompt's skill listing. Skills make it into the prompt
+ * ONLY for chains without the built-in pi marker; a marker chain's live
+ * default prompt already contains every loaded skill, so appending a second
+ * listing would duplicate it (see composeSkillsBlock).
+ *
  * Exported for unit tests; the handler in `before_agent_start` is a one-line
  * delegation.
  */
@@ -281,7 +326,8 @@ export function composeSystemPrompt(
   state: Pick<RuntimeState, "activeRole" | "settings">,
   pi: Pick<ExtensionAPI, "getAllTools" | "getSessionName">,
   baseSystemPrompt?: string,
-): { systemPrompt: string } | undefined {
+  loadedSkills?: Skill[],
+): { systemPrompt: string; skillWarnings?: string[] } | undefined {
   if (!state.activeRole) return undefined;
   const body = substitutePiDefaultPrompt(state.activeRole.body, baseSystemPrompt);
   if (!body) return undefined;
@@ -290,9 +336,130 @@ export function composeSystemPrompt(
     mode !== "off" && isIntercomAvailable(pi as ExtensionAPI)
       ? intercomPromptAddendum(mode, pi.getSessionName())
       : "";
-  const parts = [body, addendum].filter((p) => p.length > 0);
+  const { block: skillsBlock, warnings: skillWarnings } = composeSkillsBlock(
+    state.activeRole.skills,
+    state.activeRole.body,
+    loadedSkills,
+    state.settings.warnOnMissingMcp ?? true,
+  );
+  const parts = [body, skillsBlock, addendum].filter((p) => p && p.length > 0);
   if (parts.length === 0) return undefined;
-  return { systemPrompt: parts.join("\n\n") };
+  const result: { systemPrompt: string; skillWarnings?: string[] } = {
+    systemPrompt: parts.join("\n\n"),
+  };
+  if (skillWarnings.length > 0) result.skillWarnings = skillWarnings;
+  return result;
+}
+
+/**
+ * Resolve a role's `skills` directive against the loaded skill set and render
+ * the Agent-Skills XML listing for the system prompt.
+ *
+ * Returns `{ block: undefined }` when the role gets no skills; otherwise the
+ * rendered listing (generated by Pi's own `formatSkillsForPrompt`, so the
+ * output is byte-identical to what Pi's default prompt emits).
+ *
+ * Rules (mirror docs in README "skills frontmatter"):
+ *   - marker chain (role body contains `PI_DEFAULT_PROMPT_MARKER`, i.e.
+ *     `extends: pi`): the live default prompt already includes every loaded
+ *     skill, so nothing is appended. A narrowing directive (list or
+ *     explicit-empty) cannot subtract from that blob and is ignored with a
+ *     warning; `all` needs no block and no warning.
+ *   - non-marker chain + `all`: every loaded skill.
+ *   - non-marker chain + list: exactly those; unknown names are skipped
+ *     with a warning (gated on `warnOnMissing`), and skills with
+ *     `disable-model-invocation: true` are skipped with a warning (they are
+ *     only reachable via `/skill:name` and are excluded by
+ *     `formatSkillsForPrompt` anyway).
+ *   - explicit empty: no skills, no warning.
+ */
+export function composeSkillsBlock(
+  directive: SkillsDirective | undefined,
+  roleBody: string,
+  loadedSkills: Skill[] | undefined,
+  warnOnMissing: boolean,
+): { block?: string; warnings: string[] } {
+  const warnings: string[] = [];
+  if (!directive || directive.kind === "inherit" || roleBody.includes(PI_DEFAULT_PROMPT_MARKER)) {
+    // Defensive: resolved roles never carry `inherit`, but direct
+    // constructions in tests do. Marker chains: the default prompt blob
+    // already carries skills — a narrowing directive can't subtract from it.
+    if (directive && directive.kind === "set" && roleBody.includes(PI_DEFAULT_PROMPT_MARKER)) {
+      const what =
+        directive.names.length > 0
+          ? `requests subset [${directive.names.join(", ")}] but`
+          : `disables skills but`;
+      if (warnOnMissing) {
+        warnings.push(
+          `role's skills directive ${what} it extends the built-in pi role, whose default prompt already includes all loaded skills. The directive is ignored.`,
+        );
+      }
+    }
+    return { warnings };
+  }
+
+  if (directive.kind === "set" && directive.names.length === 0) return { warnings };
+
+  if (!loadedSkills || loadedSkills.length === 0) {
+    if (warnOnMissing) {
+      warnings.push(
+        `skills: no skills are loaded for this session; none were added. Check .pi/skills/, ~/.pi/agent/skills/, or --skill.`,
+      );
+    }
+    return { warnings };
+  }
+
+  const byName = new Map<string, Skill>();
+  for (const s of loadedSkills) if (!byName.has(s.name)) byName.set(s.name, s);
+
+  let selected: Skill[];
+  if (directive.kind === "all") {
+    selected = loadedSkills;
+  } else {
+    selected = [];
+    const seen = new Set<string>();
+    for (const name of directive.names) {
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const skill = byName.get(name);
+      if (!skill) {
+        if (warnOnMissing) {
+          warnings.push(`skills: skill "${name}" is not loaded for this session. Skipping.`);
+        }
+        continue;
+      }
+      if (skill.disableModelInvocation) {
+        if (warnOnMissing) {
+          warnings.push(
+            `skills: skill "${name}" has disable-model-invocation: true; it is only reachable via /skill:name. Skipping.`,
+          );
+        }
+        continue;
+      }
+      selected.push(skill);
+    }
+  }
+
+  if (selected.length === 0) return { warnings };
+  return { block: formatSkillsForPrompt(selected), warnings };
+}
+
+/**
+ * Snapshot Pi's pristine active tool set on `session_start`, before any role
+ * mutates it. Best-effort: if the API is unavailable that early, fall back to
+ * all registered non-MCP tools, then to the empty set.
+ */
+function captureBaselineTools(pi: ExtensionAPI): string[] {
+  try {
+    return pi.getActiveTools();
+  } catch (err) {
+    debugLog("index", "baseline tool snapshot failed; falling back to non-MCP registered tools", String(err));
+    try {
+      return pi.getAllTools().map((t) => t.name).filter((n) => !n.startsWith("mcp:"));
+    } catch {
+      return [];
+    }
+  }
 }
 
 /**
@@ -443,12 +610,14 @@ async function applyResolved(
       ctx,
       warnOnMissingMcp: state.settings.warnOnMissingMcp ?? true,
       intercomMode: state.settings.intercomMode,
+      defaultTools: state.baselineTools,
     },
     options,
   );
 
   state.activeRole = resolved;
   state.intent = result.state.intent;
+  state.skillsWarnedKey = null; // fresh role → allow a fresh warning round
   debugLog("index", `applied role=${resolved.name}`, { intent: result.state.intent, warnings: result.warnings });
 
   if (ctx.hasUI && result.warnings.length > 0 && !options.silent) {

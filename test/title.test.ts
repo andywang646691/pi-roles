@@ -233,6 +233,7 @@ describe("generateAndApplyTitle", () => {
       path: "/v/architect.md",
       extendsChain: ["architect"],
       tools: { kind: "inherit" },
+      skills: { kind: "set", names: [] },
       ...overrides,
     };
   }

@@ -191,7 +191,8 @@ describe("composeSystemPrompt", () => {
     return {
       name: BUILTIN_PI_ROLE_NAME,
       description: "Pi's default expert coding agent.",
-      tools: { kind: "inherit" },
+      tools: { kind: "default" },
+      skills: { kind: "all" },
       body,
       source: "built-in",
       path: "/v/pi.md",
@@ -274,6 +275,145 @@ describe("composeSystemPrompt", () => {
       piWith([INTERCOM_TOOL_NAME], "architect"),
     );
     expect(result?.systemPrompt).toMatch(/intercom \(both modes\)/);
+  });
+
+  // ----------------------------------------------------------- skills
+
+  function twoSkills(): { name: string; description: string; filePath: string; baseDir: string; sourceInfo: any; disableModelInvocation: boolean }[] {
+    return [
+      {
+        name: "git-review",
+        description: "Review staged git changes.",
+        filePath: "/v/.pi/skills/git-review/SKILL.md",
+        baseDir: "/v/.pi/skills/git-review",
+        sourceInfo: {},
+        disableModelInvocation: false,
+      },
+      {
+        name: "secret-keeper",
+        description: "Handles secrets.",
+        filePath: "/v/.pi/skills/secret-keeper/SKILL.md",
+        baseDir: "/v/.pi/skills/secret-keeper",
+        sourceInfo: {},
+        disableModelInvocation: true,
+      },
+    ];
+  }
+
+  function resolveWithSkills(name: string, body: string, skills?: string | null): ResolvedRole {
+    const lines = [`name: ${name}`, `description: x`];
+    if (skills === null) lines.push("skills:");
+    else if (skills !== undefined) lines.push(`skills: ${JSON.stringify(skills)}`);
+    return resolveRole(name, [parseRoleSource(`---\n${lines.join("\n")}\n---\n${body}`, `/v/${name}.md`, "project")]);
+  }
+
+  it("skills: all appends the Agent-Skills listing after the body", () => {
+    const role = resolveWithSkills("with-all", "Body.", "all");
+    const result = composeSystemPrompt(
+      { activeRole: role, settings: {} },
+      piWith([]),
+      undefined,
+      twoSkills(),
+    );
+    expect(result?.systemPrompt.startsWith("Body.")).toBe(true);
+    // The listing is Pi's own prose format (formatSkillsForPrompt), which
+    // names every skill and carries its description.
+    expect(result?.systemPrompt).toContain("git-review");
+    expect(result?.systemPrompt).toContain("Review staged git changes.");
+    // disable-model-invocation skills are excluded by formatSkillsForPrompt
+    expect(result?.systemPrompt).not.toContain("secret-keeper");
+    expect(result?.skillWarnings).toBeUndefined();
+  });
+
+  it("skills: list keeps exactly those and warns on unknown names", () => {
+    const role = resolveWithSkills("with-list", "Body.", "git-review, nope");
+    const result = composeSystemPrompt(
+      { activeRole: role, settings: {} },
+      piWith([]),
+      undefined,
+      twoSkills(),
+    );
+    expect(result?.systemPrompt).toContain("git-review");
+    expect(result?.skillWarnings?.[0]).toContain('"nope"');
+    expect(result?.systemPrompt).not.toContain("nope");
+  });
+
+  it("warnOnMissingMcp: false silences unknown-skill warnings", () => {
+    const role = resolveWithSkills("with-list", "Body.", "nope");
+    const result = composeSystemPrompt(
+      { activeRole: role, settings: { warnOnMissingMcp: false } },
+      piWith([]),
+      undefined,
+      twoSkills(),
+    );
+    expect(result?.systemPrompt).toBe("Body.");
+    expect(result?.skillWarnings).toBeUndefined();
+  });
+
+  it("explicit disable-model-invocation skill is skipped with a warning", () => {
+    const role = resolveWithSkills("with-disabled", "Body.", "secret-keeper");
+    const result = composeSystemPrompt(
+      { activeRole: role, settings: {} },
+      piWith([]),
+      undefined,
+      twoSkills(),
+    );
+    expect(result?.systemPrompt).toBe("Body.");
+    expect(result?.skillWarnings?.[0]).toContain("disable-model-invocation");
+  });
+
+  it("skills directive on a marker chain is ignored with a warning", () => {
+    const role = piRole(
+      `${PI_DEFAULT_PROMPT_MARKER}\n\n---\n\nYou are strict.`,
+    );
+    // Override the resolved skills directive to a narrowing one (as if the
+    // child had written skills: git-review while extending pi).
+    const narrowed: ResolvedRole = {
+      ...role,
+      skills: { kind: "set", names: ["git-review"] },
+    };
+    const result = composeSystemPrompt(
+      { activeRole: narrowed, settings: {} },
+      piWith([]),
+      "base prompt",
+      twoSkills(),
+    );
+    // No duplicate listing — the base blob already carries skills.
+    expect(result?.systemPrompt).toBe("base prompt\n\n---\n\nYou are strict.");
+    expect(result?.skillWarnings?.[0]).toMatch(/extends the built-in pi role/);
+  });
+
+  it("skills: all on a marker chain appends nothing and warns nothing", () => {
+    const result = composeSystemPrompt(
+      { activeRole: piRole(), settings: {} },
+      piWith([]),
+      "base prompt",
+      twoSkills(),
+    );
+    expect(result).toEqual({ systemPrompt: "base prompt" });
+  });
+
+  it("skills directive with no loaded skills warns once and appends nothing", () => {
+    const role = resolveWithSkills("no-skills", "Body.", "git-review");
+    const result = composeSystemPrompt(
+      { activeRole: role, settings: {} },
+      piWith([]),
+      undefined,
+      undefined,
+    );
+    expect(result?.systemPrompt).toBe("Body.");
+    expect(result?.skillWarnings?.[0]).toMatch(/no skills are loaded/);
+  });
+
+  it("explicit empty skills appends nothing and warns nothing", () => {
+    const role = resolveWithSkills("no-skills", "Body.", null);
+    const result = composeSystemPrompt(
+      { activeRole: role, settings: {} },
+      piWith([]),
+      undefined,
+      twoSkills(),
+    );
+    expect(result).toEqual({ systemPrompt: "Body." });
   });
 });
 

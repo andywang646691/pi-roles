@@ -45,6 +45,7 @@ function makeRole(overrides: Partial<ResolvedRole> = {}): ResolvedRole {
     path: "/virtual/test.md",
     extendsChain: ["test"],
     tools: { kind: "inherit" },
+    skills: { kind: "set", names: [] },
     ...overrides,
   };
 }
@@ -104,6 +105,7 @@ function applyCtxOf(fake: FakeApi, opts: Partial<ApplyContext> = {}): ApplyConte
     ctx: fake.ctx as unknown as ApplyContext["ctx"],
     warnOnMissingMcp: opts.warnOnMissingMcp ?? true,
     intercomMode: opts.intercomMode,
+    defaultTools: opts.defaultTools ?? [],
   };
 }
 
@@ -208,6 +210,60 @@ describe("filterToolsForRuntime", () => {
       false,
     );
     expect(r).toMatchObject({ kind: "set", names: [], warnings: [] });
+  });
+
+  it("all → every registered tool, intercom enforced", () => {
+    const r = filterToolsForRuntime(
+      { kind: "all" },
+      new Set(["read", "bash", "mcp:fs"]),
+      "both",
+      true,
+      true,
+    );
+    expect(r).toMatchObject({
+      kind: "set",
+      names: ["read", "bash", "mcp:fs", "intercom"],
+      warnings: [],
+    });
+  });
+
+  it("all → intercom not duplicated when already active", () => {
+    const r = filterToolsForRuntime(
+      { kind: "all" },
+      new Set(["intercom", "read"]),
+      "send",
+      true,
+      true,
+    );
+    expect(r).toMatchObject({ kind: "set", names: ["intercom", "read"] });
+  });
+
+  it("default → restores the session-start baseline", () => {
+    const r = filterToolsForRuntime(
+      { kind: "default" },
+      new Set(["read", "bash", "edit", "write", "intercom"]),
+      "off",
+      false,
+      true,
+      ["read", "bash", "edit", "write"],
+    );
+    expect(r).toMatchObject({
+      kind: "set",
+      names: ["read", "bash", "edit", "write"],
+      warnings: [],
+    });
+  });
+
+  it("default + intercom mode adds the intercom tool", () => {
+    const r = filterToolsForRuntime(
+      { kind: "default" },
+      new Set(["read", "intercom"]),
+      "receive",
+      true,
+      true,
+      ["read"],
+    );
+    expect(r).toMatchObject({ kind: "set", names: ["read", "intercom"] });
   });
 
   it("unknown non-mcp tool warns but passes through", () => {

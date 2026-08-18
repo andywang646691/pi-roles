@@ -119,7 +119,7 @@ export default function (pi: ExtensionAPI) { ... }
 2. ✅ **`mcp:server-name` inside `tools`**, not a separate `mcp:` field. Mirrors pi-subagents.
 3. ✅ **Built-in `pi` (default) + `role-assistant` (optional) at lowest priority**; configurable `defaultRole` setting overrides. The default role is `pi`, not `role-assistant`.
 4. ✅ **`/role <name>` preserves history; `--reset` clears it** via `ctx.newSession()`.
-5. ✅ **Tools tri-state**: set / explicit-empty / inherit (encoded as `ToolsDirective` in schemas.ts).
+5. ✅ **`tools`/`skills` shared collection directive**: set / explicit-empty / `all` / inherit — one schema shape (`String | null`), one `normalizeCollection`, one merge pass (encoded as `CollectionDirective` in schemas.ts; `tools` additionally carries the apply-time-only `default` kind = the session-start baseline snapshot for `extends: pi` chains).
 6. ✅ **Markdown body merge for `extends`**: parent prepended to child.
 7. ✅ **Session naming**: `<role-name> — <intent>`, intent generated async on first user message via `titleModel`. Role-name prefix updates on swap; intent persists.
 8. ✅ **Footbar via `ctx.ui.setStatus`** — no ANSI escape custom rendering, no powerline-footer dependency.
@@ -157,11 +157,12 @@ Honestly might not even need a separate file — could inline in roles.ts. Decid
    - **TypeBox 1.x error field is `instancePath`, not `path`.** `Value.Errors(schema, value)` yields `TValidationError` objects whose location field is `instancePath` (JSON-Pointer style — `/extends`, `/thinking`, etc.) and the human-readable text is `error.message`. The original BUILD-STATUS.md draft said `error.path`; that does not exist on the typebox 1.x error union (verified against typebox 1.1.33).
    - Enforce `name === filename without .md`.
 
-3. **Tools tri-state normalization**:
+3. **Collection (tools/skills) normalization** (`normalizeCollection`, shared by both fields):
    - field absent in parsed object → `{ kind: "inherit" }`.
+   - field present, value `all` (token) → `{ kind: "all" }`.
    - field present, value is `null` or `""` → `{ kind: "set", names: [] }`.
    - field present with content → `{ kind: "set", names: parseToolList(value) }`.
-   - `parseToolList` splits on commas, trims, drops empties. Don't filter `mcp:*` here — that happens in `apply.ts` based on runtime detection.
+   - `parseList` splits on commas, trims, drops empties. Don't filter `mcp:*` here — that happens in `apply.ts` based on runtime detection.
 
 4. **`extends` resolution** (the tricky one):
    - Build a map of `name -> RawRole` from discovery results.
@@ -170,7 +171,7 @@ Honestly might not even need a separate file — could inline in roles.ts. Decid
    - Merge:
      - Start with parent's resolved fields.
      - Override `description`, `model`, `thinking`, `intercom` if child sets them.
-     - For `tools`: child's `ToolsDirective` wins UNLESS it's `inherit`, in which case use parent's.
+     - For `tools` / `skills`: child's directive wins UNLESS it's `inherit`, in which case use parent's. Post-pass defaults: chain without built-in pi and no explicit directive → `set: []` (none, deterministic); chain THROUGH built-in pi → `tools: { kind: "default" }` (session-start baseline snapshot) and `skills: { kind: "all" }` (the marker already carries them).
      - For `body`: `parent.body + "\n\n---\n\n" + child.body` (both trimmed).
    - Return `ResolvedRole` (not `RawRole`).
 

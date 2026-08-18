@@ -20,15 +20,18 @@ import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
 import { Value } from "typebox/value";
 import {
+  ALL_TOKEN,
   BUILTIN_PI_ROLE_NAME,
   BUILTIN_ROLE_ASSISTANT_NAME,
   PI_DEFAULT_PROMPT_MARKER,
   RoleFrontmatterSchema,
+  type CollectionDirective,
   type RawRole,
   type ResolvedRole,
   type RoleFrontmatter,
   type RoleScope,
   type RoleSource,
+  type SkillsDirective,
   type ToolsDirective,
 } from "./schemas.ts";
 import { debugLog } from "./debug.ts";
@@ -243,25 +246,28 @@ function basenameWithoutExt(path: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Tools tri-state
+// Collection (tools / skills) directive normalization
 // ---------------------------------------------------------------------------
 
 /**
- * Normalize a frontmatter `tools` value into the tri-state `ToolsDirective`.
+ * Normalize a frontmatter `tools` / `skills` value into `CollectionDirective`.
+ * One function for BOTH fields — their syntax and semantics are identical by
+ * design (see schemas.ts `CollectionDirective`).
  *
- * Why this is a tri-state: we need `inherit` (do nothing on apply / let
- * `extends` parent decide) to be distinguishable from `set: []` (explicitly
- * disable all tools). YAML collapses `tools:` and `tools: ~` to `null`, and
- * the field is `undefined` when missing. Both `null` and `""` mean
- * "explicitly empty"; `undefined` means "inherit".
+ * We need `inherit` (field absent — let the `extends` parent decide) to be
+ * distinguishable from `set: []` (explicitly disable). YAML collapses
+ * `tools:` / `skills:` and `~` to `null`, and the field is `undefined` when
+ * missing. Both `null` and `""` mean "explicitly empty"; `undefined` means
+ * "inherit". The token `all` means everything in the domain.
  *
  * MCP `mcp:*` entries are kept verbatim here — runtime filtering against
  * pi-mcp-adapter's installed tools happens in `apply.ts` because that's where
  * we have access to `pi.getAllTools()`.
  */
-export function normalizeTools(value: string | null | undefined): ToolsDirective {
+export function normalizeCollection(value: string | null | undefined): CollectionDirective {
   if (value === undefined) return { kind: "inherit" };
   if (value === null) return { kind: "set", names: [] };
+  if (value.trim() === ALL_TOKEN) return { kind: "all" };
   const names = value
     .split(",")
     .map((s) => s.trim())
@@ -279,9 +285,17 @@ export function normalizeTools(value: string | null | undefined): ToolsDirective
  *
  *   - `description`, `model`, `thinking`, `intercom`: child wins; if child
  *     omits a field, the nearest ancestor that sets it wins.
- *   - `tools`: child's `ToolsDirective` wins unless it's `inherit`, in which
- *     case the parent's directive applies. Walking continues up until a
- *     non-`inherit` directive is found; if none, defaults to `inherit`.
+ *   - `tools` / `skills`: child's directive wins unless it's `inherit`, in
+ *     which case the parent's directive applies. Walking continues up until
+ *     a non-`inherit` directive is found; if none, the default depends on
+ *     whether the chain transitively includes the built-in `pi` role:
+ *       - pi in chain → `tools` resolves to `{ kind: "default" }` (Pi's
+ *         fresh-session baseline tool set, resolved at apply time) and
+ *         `skills` to `{ kind: "all" }` (the marker already carries them).
+ *       - no pi in chain → both resolve to `{ kind: "set", names: [] }`
+ *         (none) — a plain custom role is self-contained: what it doesn't
+ *         declare, it doesn't get. This keeps role switching deterministic
+ *         (no leaking the previous role's toolset).
  *   - `body`: parent body is prepended to child body, separated by a blank
  *     line + `---` + blank line. This applies recursively, so a 3-level
  *     chain produces grandparent → parent → child in order.
@@ -346,6 +360,8 @@ export function resolveRole(name: string, all: RawRole[]): ResolvedRole {
   let thinking: ResolvedRole["thinking"];
   let intercom: ResolvedRole["intercom"];
   let tools: ToolsDirective = { kind: "inherit" };
+  let skills: SkillsDirective = { kind: "inherit" };
+  let chainHasBuiltinPi = false;
   const bodies: string[] = [];
 
   for (const role of ordered) {
@@ -354,16 +370,30 @@ export function resolveRole(name: string, all: RawRole[]): ResolvedRole {
     if (fm.model !== undefined) model = fm.model;
     if (fm.thinking !== undefined) thinking = fm.thinking;
     if (fm.intercom !== undefined) intercom = fm.intercom;
-    const directive = normalizeTools(fm.tools);
-    if (directive.kind === "set") tools = directive;
+    const toolsDirective = normalizeCollection(fm.tools);
+    if (toolsDirective.kind !== "inherit") tools = toolsDirective;
+    const skillsDirective = normalizeCollection(fm.skills);
+    if (skillsDirective.kind !== "inherit") skills = skillsDirective;
     if (role.source === "built-in" && role.frontmatter.name === BUILTIN_PI_ROLE_NAME) {
       // Built-in pi: body is a marker, substituted with Pi's live default
       // system prompt at compose time. Its markdown body (informational
       // text for humans) is never used.
+      chainHasBuiltinPi = true;
       bodies.push(PI_DEFAULT_PROMPT_MARKER);
     } else if (role.body.length > 0) {
       bodies.push(role.body);
     }
+  }
+
+  // Post-pass: a chain that (transitively) includes built-in pi inherits pi's
+  // promises — tools = the fresh-session baseline, skills = all (the marker
+  // already carries them). Any other chain resolves absent fields to
+  // "none", so every role is fully self-describing (see the docstring above).
+  if (tools.kind === "inherit") {
+    tools = chainHasBuiltinPi ? { kind: "default" } : { kind: "set", names: [] };
+  }
+  if (skills.kind === "inherit") {
+    skills = chainHasBuiltinPi ? { kind: "all" } : { kind: "set", names: [] };
   }
 
   // Schema guarantees leaf.frontmatter.description is non-empty; merge can
@@ -376,6 +406,7 @@ export function resolveRole(name: string, all: RawRole[]): ResolvedRole {
     model,
     thinking,
     tools,
+    skills,
     intercom,
     body: bodies.join("\n\n---\n\n"),
     source: leaf.source,
